@@ -6,6 +6,7 @@ from p4p import Type, Value
 from p4p.nt import NTScalar, NTNDArray
 from lume_pva.epics import epicsAlarmSeverity, epicsAlarmStatus
 from numpy import ndarray
+from caproto import ChannelData, ChannelDouble, ChannelInteger, ChannelString, ChannelEnum
 import numpy as np
 import torch
 
@@ -85,6 +86,25 @@ class VariableHandler(ABC):
         """
         return True
 
+    @abstractmethod
+    def default_value(self, variable: Variable, flatten: bool = False, native_python: bool = False) -> Any:
+        """
+        Fetches the default value for the Variable.
+        This will always return a valid object that matches the requested dtype or underlying datatype
+        of the variable.
+        
+        Parameters
+        ----------
+        variable : Variable
+            The variable to generate a default for
+        flatten : bool
+            For N-dimensional types, flatten before returning
+        native_python : bool
+            Convert the type to a native python type (i.e. np.array -> list).
+            Raises TypeError() if that is not possible.
+        """
+        raise NotImplementedError()
+
 class ScalarVariableHandler(VariableHandler):
     """Variable handler for LUME ScalarVariable, and the TorchScalarVariable type"""
 
@@ -128,10 +148,7 @@ class ScalarVariableHandler(VariableHandler):
 
     def pack_value(self, variable: ScalarVariable | IntVariable, type_: Type, value: ScalarType | None) -> Value:
         if value is None: # Use default if not provided
-            if variable.default_value is None:
-                value = 0
-            else:
-                value = variable.default_value
+            value = self.default_value(variable)
 
         # Force cast to int for int variables, otherwise we trip validation
         if isinstance(variable, IntVariable):
@@ -152,6 +169,12 @@ class ScalarVariableHandler(VariableHandler):
         else:
             return float(value['value'])
 
+    def default_value(self, variable: ScalarVariable | IntVariable, flatten: bool = False, native_python: bool = False):
+        v = variable.default_value if variable.default_value is not None else 0
+        if isinstance(variable, IntVariable):
+            return int(v)
+        else:
+            return float(v)
 
 class NDVariableHandler(VariableHandler):
     """Variable handler for LUME NDVariable type"""
@@ -180,7 +203,7 @@ class NDVariableHandler(VariableHandler):
                 return 'uintValue'
             case np.uint64 | torch.uint64:
                 return 'ulongValue'
-            case np.str_:
+            case np.str_ | np.dtypes.StringDType():
                 return 'stringValue'
             case _:
                 raise TypeError(f'{variable.name}: Unsupported type "{variable.dtype.__class__}"')
@@ -195,7 +218,7 @@ class NDVariableHandler(VariableHandler):
 
     def create_type(self, variable: NDVariable | TorchNDVariable) -> Type:
         # NTNDArray (per the NT spec) does not support string[] as a value type. We'll deviate from the standard a bit here
-        if variable.dtype in [np.str_]:
+        if variable.dtype in [np.str_, np.dtypes.StringDType()]:
             extras = [
                 ('value', ('U', None, [
                     ('stringValue', 'as')
@@ -207,12 +230,7 @@ class NDVariableHandler(VariableHandler):
     
     def pack_value(self, variable: NDVariable | TorchNDVariable, type_: Type, value: ndarray | torch.Tensor | None) -> Value:
         if value is None: # Use default if not provided
-            if variable.default_value is not None:
-                value = variable.default_value
-            elif isinstance(variable, TorchNDVariable):
-                value = torch.zeros(size=variable.shape, dtype=variable.dtype)
-            elif isinstance(variable, NDVariable):
-                value = np.zeros(shape=variable.shape, dtype=variable.dtype)
+            value = self.default_value(variable)
 
         if not isinstance(value, ndarray):
             raise ValueError(f'NDVariable expectes an ndarray, but got {type(value)}')
@@ -248,6 +266,23 @@ class NDVariableHandler(VariableHandler):
         else:
             raise ValueError(f'Internal error: invalid value type {type(arr)}')
 
+    def default_value(self, variable: NDVariable | TorchNDVariable, flatten: bool = False, native_python: bool = False) -> ndarray | torch.Tensor:
+        value = variable.default_value
+        if value is None:
+            if variable.dtype in [np.str_, np.dtypes.StringDType()]:
+                value = np.full(shape=(variable.shape), fill_value='', dtype=variable.dtype)
+            elif isinstance(variable, TorchNDVariable):
+                value = torch.zeros(size=variable.shape, dtype=variable.dtype)
+            elif isinstance(variable, NDVariable):
+                value = np.zeros(shape=variable.shape, dtype=variable.dtype)
+            else:
+                raise TypeError()
+        if flatten:
+            value = value.flatten()
+        if native_python:
+            value = value.tolist()
+        return value
+
 class TorchScalarVariableHandler(VariableHandler):
     """Handler for TorchScalarVariable"""
 
@@ -258,12 +293,9 @@ class TorchScalarVariableHandler(VariableHandler):
 
     def pack_value(self, variable: TorchScalarVariable, type_: Type, value: TorchScalarType | None) -> Value:
         if value is None: # Use default if not provided
-            if variable.default_value is None:
-                value = 0
-            else:
-                value = variable.default_value
+            value = self.default_value(variable)
 
-        if not isinstance(value, (torch.Tensor, float, int)):
+        if not isinstance(value, self.TorchScalarType):
             raise ValueError(f'ScalarVariable {variable.name} expects torch.Tensor, int or float, but got {type(value)}')
 
         v = Value(
@@ -272,8 +304,11 @@ class TorchScalarVariableHandler(VariableHandler):
         ScalarVariableHandler.set_metadata(variable, v, float(value))
         return v
 
-    def unpack_value(self, variable: ScalarVariable, value: Value) -> float:
+    def unpack_value(self, variable: TorchScalarVariable, value: Value) -> float:
         return float(value['value'])
+
+    def default_value(self, variable: TorchScalarVariable, flatten: bool = False, native_python: bool = False):
+        return variable.default_value if variable.default_value is not None else 0.0
 
 class SimpleScalarHandler(VariableHandler):
     """Handler for StrVariable"""
@@ -283,15 +318,7 @@ class SimpleScalarHandler(VariableHandler):
 
     def pack_value(self, variable: StrVariable | BoolVariable, type_: Type, value: str | bool | None) -> Value:
         if value is None:
-            if variable.default_value is None:
-                if isinstance(variable, BoolVariable):
-                    value = False
-                elif isinstance(variable, StrVariable):
-                    value = ''
-                else:
-                    raise ValueError('Unsupported variable type for SimpleScalarHandler')
-            else:
-                value = variable.default_value
+            value = self.default_value(variable)
 
         if isinstance(variable, StrVariable) and not isinstance(value, str):
             raise ValueError(f'StrVariable {variable.name} expects str, but got {type(value)}')
@@ -307,26 +334,15 @@ class SimpleScalarHandler(VariableHandler):
         else:
             return str(value['value'])
 
-class StringVariableHandler(VariableHandler):
-    """Handler for StrVariable"""
-    
-    def create_type(self, variable: BoolVariable):
-        return NTScalar.buildType('?')
-    
-    def pack_value(self, variable: StrVariable, type_: Type, value: str) -> Value:
-        if value is None:
-            if variable.default_value is None:
-                value = ''
-            else:
-                value = variable.default_value
-                
-        if not isinstance(value, str):
-            raise ValueError(f'StrVariable {variable.name} expects str, but got {type(value)}')
-        
-        return Value(type_, {'value': value})
-    
-    def unpack_value(self, variable: StrVariable, value: Value) -> str:
-        return str(value['value'])
+    def default_value(self, variable: StrVariable | BoolVariable, flatten: bool = False, native_python: bool = False) -> bool | str:
+        if variable.default_value is not None:
+            return variable.default_value
+        elif isinstance(variable, BoolVariable):
+            return False
+        elif isinstance(variable, StrVariable):
+            return ''
+        else:
+            raise TypeError('Unsupported variable type for SimpleScalarHandler')
 
 
 def find_variable_handler(type) -> VariableHandler | None:

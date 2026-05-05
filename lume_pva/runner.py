@@ -10,6 +10,10 @@ from collections.abc import Callable
 from queue import Queue
 from enum import IntEnum
 from lume_pva.variables import VariableHandler, find_variable_handler
+from caproto.server import PVSpec, PvpropertyData
+from caproto import ChannelType
+import caproto.server
+import caproto
 import time
 import math
 import p4p.server
@@ -18,7 +22,9 @@ import p4p.nt
 import logging
 import pvua
 import sys
+import threading
 import socket
+import asyncio
 
 LOG = logging.getLogger('LumePva')
 
@@ -27,6 +33,11 @@ VALID_MODEL_MODES = ['continuous', 'snapshot']
 
 DEFAULT_MODEL_MODE = 'continuous'
 DEFAULT_PV_MODE = 'rw'
+
+class ModelState(IntEnum):
+    Idle = 0
+    Simulating = 1
+    Posting = 2
 
 class RunnerConfig(TypedDict):
     """
@@ -70,6 +81,7 @@ class Runner:
     """Simple runner for LUMEModel derived models"""
     
     pvs: Dict[str, SharedPV]
+    ca_pvs: Dict[str, PvpropertyData]
     pv_handlers: Dict[str, VariableHandler]
     # List of all output PVs that need to be updated after simulation
     outputs: list[str]
@@ -130,11 +142,14 @@ class Runner:
         self.outputs = []
         self.types = {}
         self.subs = {}
+        self.model_state = ModelState.Idle
         self.context = p4p.client.thread.Context()
         self.providers = {} # Just for renaming
+        self.pvdb = {} # For caproto
         self.snapshot_pvs = []
-        self.pv_to_var = {} # Map pv name -> variable name
+        self.pv_to_var: Dict[str, str] = {} # Map pv name -> variable name
         self.var_to_pv = {}
+        self.ca_pvs = {}
         self.pvua_context = pvua.Context()
 
         # Generate default config
@@ -196,7 +211,8 @@ class Runner:
                     pv,
                     var,
                     ro=c['mode'] == 'ro',
-                    prefix=self.config.get('prefix', '')
+                    prefix=self.config.get('prefix', ''),
+                    handler=handler
                 )
             else:
                 # Create a client monitor
@@ -214,6 +230,10 @@ class Runner:
 
         # Start the server
         self.server = p4p.server.Server(providers=[self.providers])
+
+        # Start the CA server
+        if len(self.pvdb.keys()) > 0:
+            threading.Thread(target=caproto.server.run, args=[self.pvdb]).start()
 
         # Kick off an initial update to propagate any defaults the model may have set
         self.queue.put({})
@@ -266,9 +286,16 @@ class Runner:
             }
         return config
 
-    def _add_pv(self, pv: str, var: Variable, ro: bool, prefix: str) -> None:
+    def _add_pv(
+            self,
+            pv: str,
+            var: Variable,
+            ro: bool,
+            prefix: str,
+            handler: VariableHandler
+        ) -> None:
         """
-        Create a new PV
+        Create a new PV for CA and/or PVA
 
         Parameters
         ----------
@@ -280,6 +307,8 @@ class Runner:
             True if read-only
         prefix : str
             String to prefix the PV name with
+        handler : VariableHandler
+            The variable handler for this variable type
         """
         pvobj = SharedPV(
             handler=Runner.Handler(
@@ -291,6 +320,21 @@ class Runner:
         )
         self.pvs[var.name] = pvobj
         self.providers[f'{prefix}{pv}'] = pvobj
+
+        # Generate a default value suitable for caproto (native types, flattened)
+        default_value = handler.default_value(var, flatten=True, native_python=True)
+        
+        # String arrays are not really supported in channel access. Skip it.
+        if isinstance(default_value, list) and isinstance(default_value[0], str):
+            return
+
+        pvd = PVSpec(
+            name=f'{pv}',
+            value=default_value,
+            put=self._on_caput,
+        ).create()
+        self.pvdb[f'{prefix}{pv}'] = pvd
+        self.ca_pvs[var.name] = pvd
 
     def _add_client(self, pv: str, var: Variable, monitor: bool) -> bool:
         """Setup a new monitor for the specified PV"""
@@ -340,6 +384,19 @@ class Runner:
             initial=val
         )
         self.providers[f'{self.config["prefix"]}{pv}'] = self.pvs[pv]
+
+    async def _on_caput(self, instance: PvpropertyData, value: Any):
+        LOG.debug(f'CA: {instance} -> {value} (type={type(value)})')
+        # FIXME: This sucks big time! This callback will always be run whenever we set the value, even internally with pv.write/write_metadata
+        # So, we'll need to ignore internal updates manually to avoid infinite loops, writes to read-only PVs, etc.
+        # This *could* result in caputs getting dropped if they arrive right as the model is publishing results, though!
+        if self.model_state == ModelState.Posting:
+            return
+        var = self.pv_to_var.get(instance.name)
+        if var is None:
+            LOG.warning(f'CA: Unknown variable {instance.name} has no entry in PV -> VAR mapping')
+            return
+        self.queue.put({var: {'value': value, 'ts': time.time()}})
 
     def _create_control_pvs(self):
         """Create any required control PVs"""
@@ -448,11 +505,15 @@ class Runner:
             if latest_ts <= 0:
                 latest_ts = time.time()
 
+            self.model_state = ModelState.Simulating
+
             # Set and simulate
             self.model.set(new_values)
 
             # Get new simulated values
             out_values = self.model.get(self.model.supported_variables)
+
+            self.model_state = ModelState.Posting
 
             # Update output PVs with new values
             for k, v in out_values.items():
@@ -462,16 +523,27 @@ class Runner:
                 if k in self.subs:
                     continue
 
-                try:
-                    self.pvs[k].post(
-                        self._generate_value(
-                            k, v, latest_ts
+                # Update PVA component
+                pv = self.pvs.get(k)
+                if pv is not None:
+                    try:
+                        pv.post(
+                            self._generate_value(
+                                k, v, latest_ts
+                            )
                         )
-                    )
-                except KeyError:
-                    LOG.error(f'No PV found for {k}, cannot post value')
-                except Exception as e:
-                    LOG.error(f'Error posting value for {k}: {e}')
+                    except Exception as e:
+                        LOG.error(f'Error posting value for {k}: {e}')
+
+                # Update CA component
+                pv = self.ca_pvs.get(k)
+                if pv is not None:
+                    asyncio.run(pv.write(v, timestamp=latest_ts))
+                    #asyncio.run(pv.write_metadata(timestamp=latest_ts))
+
+            # Back to Idle
+            self.model_state = ModelState.Idle
+
 
     def run(self):
         """
