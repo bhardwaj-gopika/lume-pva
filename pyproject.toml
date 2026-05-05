@@ -28,7 +28,8 @@ dependencies = [
     "botorch>=0.15",
     "lume-base",
     "lume-torch @ git+https://github.com/lume-science/lume-torch",
-    "pvua @ git+https://github.com/slac-epics/pvua"
+    "pvua @ git+https://github.com/slac-epics/pvua",
+    "caproto"
 ]
 dynamic = ["version"]
 [tool.setuptools_scm]
