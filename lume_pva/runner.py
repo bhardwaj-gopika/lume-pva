@@ -527,6 +527,7 @@ class Runner:
 
             # Set and simulate
             set_start = time.perf_counter()
+            LOG.debug(f"Setting model with new values: {new_values}")
             self.model.set(new_values)
             LOG.debug(
                 f"Model set() took {(time.perf_counter() - set_start) * 1000.0:.3f} ms"
@@ -543,6 +544,7 @@ class Runner:
 
             # Update output PVs with new values
             pv_update_start = time.perf_counter()
+            LOG.debug(f"writing {len(out_values)} PVs")
             for k, v in out_values.items():
                 # Avoid attempting to post to client monitors
                 if k in self.subs:
