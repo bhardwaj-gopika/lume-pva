@@ -450,22 +450,25 @@ class EnumVariableHandler(VariableHandler):
 
         idx = value
         if isinstance(value, str):
-            idx = list(variable.options.values()).index(value)
+            idx = variable.options.index(value)
 
         return Value(type_, {
             'value': {
-                'choices': list(variable.options.values()),
+                'choices': variable.options,
                 'index': idx,
             }
         })
 
     def unpack_value(self, variable: EnumVariable, value: Value) -> str:
-        return value['value']['choices'][value['value']['index']]
+        idx = value['value']['index']
+        if idx > len(variable.options):
+            raise IndexError('Index is out of range')
+        return variable.options[idx]
 
     def default_value(self, variable: EnumVariable, flatten: bool = False, native_python: bool = False) -> int:
         if variable.default_value is not None:
             return variable.default_value
-        return list(variable.options.values())[0]
+        return variable.options[0]
 
     def value_to_native(self, variable: EnumVariable, value: str | int):
         return value
@@ -478,7 +481,7 @@ class EnumVariableHandler(VariableHandler):
             'record': 'mbbi',
             'dtype': ChannelType.ENUM,
             'cls_kwargs': {
-                'enum_strings': tuple(variable.options.values()),
+                'enum_strings': variable.options,
             }
         }
 

@@ -24,7 +24,7 @@ class SimpleMathModel(LUMEModel):
             "invert": False,
             "desc": "Hello, world!",
             "sum_output": 2.0,
-            "my_enum": 2,
+            "my_enum": "test1",
         }
         # Current state (will be modified during simulation)
         self._state = self._initial_state.copy()
@@ -77,12 +77,8 @@ class SimpleMathModel(LUMEModel):
             ),
             "my_enum": EnumVariable(
                 name="my_enum",
-                default_value="test",
-                options={
-                    2: "test",
-                    0: "hello",
-                    10: "HELP!",
-                },
+                default_value="test1",
+                options=['test1', 'test2', 'test3', 'hello']
             )
         }
     
