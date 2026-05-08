@@ -26,18 +26,22 @@ import threading
 import socket
 import asyncio
 
-LOG = logging.getLogger('LumePva')
+LOG = logging.getLogger("LumePva")
+logging.getLogger("caproto").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-VALID_PV_MODES = ['rw', 'ro', 'remote']
-VALID_MODEL_MODES = ['continuous', 'snapshot']
+VALID_PV_MODES = ["rw", "ro", "remote"]
+VALID_MODEL_MODES = ["continuous", "snapshot"]
 
-DEFAULT_MODEL_MODE = 'continuous'
-DEFAULT_PV_MODE = 'rw'
+DEFAULT_MODEL_MODE = "continuous"
+DEFAULT_PV_MODE = "rw"
+
 
 class ModelState(IntEnum):
     Idle = 0
     Simulating = 1
     Posting = 2
+
 
 class RunnerConfig(TypedDict):
     """
@@ -56,6 +60,7 @@ class RunnerConfig(TypedDict):
     protocol : list[str]
         List of supported protocols
     """
+
     class RunnerVariable(TypedDict):
         """
         Attributes
@@ -71,6 +76,7 @@ class RunnerConfig(TypedDict):
             - 'remote': Remote PV living on some other remote machine.
             Default is 'rw'
         """
+
         name: str
         pv: str
         mode: str
@@ -80,9 +86,10 @@ class RunnerConfig(TypedDict):
     variables: Dict[str, RunnerVariable]
     protocol: list[str]
 
+
 class Runner:
     """Simple runner for LUMEModel derived models"""
-    
+
     pvs: Dict[str, SharedPV]
     ca_pvs: Dict[str, PvpropertyData]
     pv_handlers: Dict[str, VariableHandler]
@@ -90,7 +97,7 @@ class Runner:
     outputs: list[str]
     values: Dict[str, Value]
     subs: Dict[str, Subscription]
-    
+
     class Handler:
         """
         Handles PUT and RPC requests to a specific PV
@@ -107,10 +114,12 @@ class Runner:
 
         def put(self, pv: SharedPV, op: ServerOperation):
             if self.ro:
-                op.done(error='Read only PV')
+                op.done(error="Read only PV")
             else:
                 # Update PVs in simulator
-                self.runner.queue.put({self.variable.name: {'value': op.value(), 'ts': time.time()}})
+                self.runner.queue.put(
+                    {self.variable.name: {"value": op.value(), "ts": time.time()}}
+                )
                 pv.post(op.value())
                 op.done()
 
@@ -118,14 +127,14 @@ class Runner:
             op.done()
 
     def __init__(
-            self, 
-            model: LUMEModel,
-            prefix='',
-            config: RunnerConfig | None = None,
-        ):
+        self,
+        model: LUMEModel,
+        prefix="",
+        config: RunnerConfig | None = None,
+    ):
         """
         Init a Runner for the specified model
-        
+
         Parameters
         ----------
         model : LUMEModel
@@ -147,10 +156,10 @@ class Runner:
         self.subs = {}
         self.model_state = ModelState.Idle
         self.context = p4p.client.thread.Context()
-        self.providers = {} # Just for renaming
-        self.pvdb = {} # For caproto
+        self.providers = {}  # Just for renaming
+        self.pvdb = {}  # For caproto
         self.snapshot_pvs = []
-        self.pv_to_var: Dict[str, str] = {} # Map pv name -> variable name
+        self.pv_to_var: Dict[str, str] = {}  # Map pv name -> variable name
         self.var_to_pv = {}
         self.ca_pvs = {}
         self.pvua_context = pvua.Context()
@@ -161,39 +170,45 @@ class Runner:
         self._config = config
 
         # Validate some configuration options
-        if config.get('remote_model_mode', DEFAULT_MODEL_MODE) not in VALID_MODEL_MODES:
-            raise KeyError(f'Model has invalid model mode {config["remote_model_mode"]}. Must be one of {VALID_MODEL_MODES}')
+        if config.get("remote_model_mode", DEFAULT_MODEL_MODE) not in VALID_MODEL_MODES:
+            raise KeyError(
+                f"Model has invalid model mode {config['remote_model_mode']}. Must be one of {VALID_MODEL_MODES}"
+            )
 
-        self.update_rate = config.get('update_rate', 0.1)
+        self.update_rate = config.get("update_rate", 0.1)
 
         # Setup PVs
-        for c in self.config['variables'].values():
+        for c in self.config["variables"].values():
             # Set default PV name if not provided
-            if 'pv' not in c:
-                c['pv'] = c['name']
-            pv = c['pv']
+            if "pv" not in c:
+                c["pv"] = c["name"]
+            pv = c["pv"]
 
             # Validate some other things first
-            if c['name'] not in self.model.supported_variables:
+            if c["name"] not in self.model.supported_variables:
                 raise KeyError(f'Variable "{c["name"]}" not found in model variables')
-            if 'mode' in c and c['mode'] not in VALID_PV_MODES:
-                raise KeyError(f'Variable "{c["name"]} has invalid mode "{c["mode"]}". Must be one of {VALID_PV_MODES}')
+            if "mode" in c and c["mode"] not in VALID_PV_MODES:
+                raise KeyError(
+                    f'Variable "{c["name"]} has invalid mode "{c["mode"]}". Must be one of {VALID_PV_MODES}'
+                )
 
             # Lookup variable based on name
-            var = self.model.supported_variables[c['name']]
+            var = self.model.supported_variables[c["name"]]
 
             # Determine a default mode, if there is none
-            if 'mode' not in c:
-                c['mode'] = 'ro' if var.read_only else 'rw'
+            if "mode" not in c:
+                c["mode"] = "ro" if var.read_only else "rw"
 
             # Validate r/w setting
-            if c['mode'] == 'rw' and var.read_only:
-                raise ValueError(f'Variable {c["name"]} was configured with read-write permissions, but the variable is read-only')
+            if c["mode"] == "rw" and var.read_only:
+                raise ValueError(
+                    f"Variable {c['name']} was configured with read-write permissions, but the variable is read-only"
+                )
 
             handler = find_variable_handler(type(var))
             if handler is None:
                 if type(var) is ParticleGroupVariable:
-                    continue # ParticleGroupVariable is a special case that doesn't have a handler
+                    continue  # ParticleGroupVariable is a special case that doesn't have a handler
                 raise RuntimeError(f'Unknown type "{type(var)}"')
 
             # Skip unsupported variable types
@@ -208,21 +223,22 @@ class Runner:
             self.pv_to_var[pv] = var.name
             self.var_to_pv[var.name] = pv
 
-            if c['mode'] in ['ro', 'rw']:
+            if c["mode"] in ["ro", "rw"]:
                 # Generate a PV to be served
                 self._add_pv(
                     pv,
                     var,
-                    ro=c['mode'] == 'ro',
-                    prefix=self.config.get('prefix', ''),
-                    handler=handler
+                    ro=c["mode"] == "ro",
+                    prefix=self.config.get("prefix", ""),
+                    handler=handler,
                 )
             else:
                 # Create a client monitor
                 self._add_client(
                     pv,
                     var,
-                    monitor = self.config['remote_model_mode'] == 'continuous' # Use monitor if in continuous mode
+                    monitor=self.config["remote_model_mode"]
+                    == "continuous",  # Use monitor if in continuous mode
                 )
 
         # Create an informational PV (i.e. including list of variables, etc.)
@@ -244,7 +260,7 @@ class Runner:
     @staticmethod
     def generate_config(
         model: LUMEModel,
-        prefix: str = '',
+        prefix: str = "",
         remote_inputs: bool = False,
         name_transformer: Callable[[Variable, str], str] | None = None,
     ) -> RunnerConfig:
@@ -269,34 +285,29 @@ class Runner:
             passing to the Runner() constructor.
         """
         config = {
-            'description': '',
-            'remote_model_mode': 'continuous',
-            'prefix': prefix,
-            'variables': {}
+            "description": "",
+            "remote_model_mode": "continuous",
+            "prefix": prefix,
+            "variables": {},
         }
         for k, v in model.supported_variables.items():
-            mode = 'ro' if v.read_only else 'rw'
+            mode = "ro" if v.read_only else "rw"
             if remote_inputs and not v.read_only:
-                mode = 'remote'
+                mode = "remote"
             if name_transformer is not None:
                 pv = name_transformer(v, v.name)
             else:
                 pv = k
-            config['variables'][k] = {
-                'name': k,
-                'pv': pv,
-                'mode': mode,
+            config["variables"][k] = {
+                "name": k,
+                "pv": pv,
+                "mode": mode,
             }
         return config
 
     def _add_pv(
-            self,
-            pv: str,
-            var: Variable,
-            ro: bool,
-            prefix: str,
-            handler: VariableHandler
-        ) -> None:
+        self, pv: str, var: Variable, ro: bool, prefix: str, handler: VariableHandler
+    ) -> None:
         """
         Create a new PV for CA and/or PVA
 
@@ -335,7 +346,7 @@ class Runner:
             if isinstance(default_value, list) and isinstance(default_value[0], str):
                 return
 
-            LOG.debug(f'Creaing CA PV: pv={pv} var_name={var.name} default={default_value} type={type(default_value)}')
+            LOG.debug(f'Creaing CA PV: pv={pv}')
             pvd = PVSpec(
                 name=f'{pv}',
                 value=default_value,
@@ -348,54 +359,57 @@ class Runner:
     def _add_client(self, pv: str, var: Variable, monitor: bool) -> bool:
         """Setup a new monitor for the specified PV"""
         if monitor:
-            self.subs[pv] = self.pvua_context.monitor(
-                pv,
-                self._monitor_callback
-            )
+            self.subs[pv] = self.pvua_context.monitor(pv, self._monitor_callback)
         else:
             self.snapshot_pvs.append(pv)
         return True
 
     def _create_model_info(self):
         """Creates a model info PV"""
-        pv = 'model_info'
+        pv = "model_info"
 
-        self.types[pv] = Type([
-            ('class', 's'),
-            ('description', 's'),
-            ('supported_variables', ('aS', None, [
-                ('name', 's'),
-                ('pvname', 's'),
-                ('type', 's'),
-                ('read_only', '?'),
-                ('mode', 's')
-            ]))
-        ])
+        self.types[pv] = Type(
+            [
+                ("class", "s"),
+                ("description", "s"),
+                (
+                    "supported_variables",
+                    (
+                        "aS",
+                        None,
+                        [
+                            ("name", "s"),
+                            ("pvname", "s"),
+                            ("type", "s"),
+                            ("read_only", "?"),
+                            ("mode", "s"),
+                        ],
+                    ),
+                ),
+            ]
+        )
 
         val = Value(self.types[pv])
-        val['class'] = self.model.__class__.__name__
-        val['description'] = self.config['description']
+        val["class"] = self.model.__class__.__name__
+        val["description"] = self.config["description"]
 
         vars = []
         for k, v in self.model.supported_variables.items():
             info = {
-                'name': v.name,
-                'read_only': v.read_only,
-                'pvname': self.config['variables'][k]['pv'],
-                'type': v.__class__.__name__,
-                'mode': self.config['variables'][k]['mode']
+                "name": v.name,
+                "read_only": v.read_only,
+                "pvname": self.config["variables"][k]["pv"],
+                "type": v.__class__.__name__,
+                "mode": self.config["variables"][k]["mode"],
             }
             vars.append(info)
 
-        val['supported_variables'] = vars
+        val["supported_variables"] = vars
 
-        self.pvs[pv] = SharedPV(
-            initial=val
-        )
-        self.providers[f'{self.config["prefix"]}{pv}'] = self.pvs[pv]
+        self.pvs[pv] = SharedPV(initial=val)
+        self.providers[f"{self.config['prefix']}{pv}"] = self.pvs[pv]
 
     async def _on_caput(self, instance: PvpropertyData, value: Any):
-        LOG.debug(f'CA: {instance} -> {value} (type={type(value)})')
         # FIXME: This sucks big time! This callback will always be run whenever we set the value, even internally with pv.write/write_metadata
         # So, we'll need to ignore internal updates manually to avoid infinite loops, writes to read-only PVs, etc.
         # This *could* result in caputs getting dropped if they arrive right as the model is publishing results, though!
@@ -403,22 +417,26 @@ class Runner:
             return
         var = self.pv_to_var.get(instance.name)
         if var is None:
-            LOG.warning(f'CA: Unknown variable {instance.name} has no entry in PV -> VAR mapping')
+            LOG.warning(
+                f"CA: Unknown variable {instance.name} has no entry in PV -> VAR mapping"
+            )
             return
         if self.model.supported_variables[var].read_only:
-            LOG.warning(f'CA: Rejected write to read-only variable "{var}" via PV "{instance.name}"')
-            raise PermissionError('Read only PV')
-        self.queue.put({var: {'value': value, 'ts': time.time()}})
+            LOG.warning(
+                f'CA: Rejected write to read-only variable "{var}" via PV "{instance.name}"'
+            )
+            raise PermissionError("Read only PV")
+        self.queue.put({var: {"value": value, "ts": time.time()}})
 
     def _create_control_pvs(self):
         """Create any required control PVs"""
-        pvname = f'{self.config["prefix"]}SNAPSHOT'
+        pvname = f"{self.config['prefix']}SNAPSHOT"
         if pvname in self.providers:
-            raise RuntimeError(f'Fatal name conflict: {pvname} for the snapshot PV already exists!')
+            raise RuntimeError(
+                f"Fatal name conflict: {pvname} for the snapshot PV already exists!"
+            )
 
-        self.providers[pvname] = SharedPV(
-            initial=NTScalar('d').wrap(0)
-        )
+        self.providers[pvname] = SharedPV(initial=NTScalar("d").wrap(0))
 
         @self.providers[pvname].put
         def onPut(pv, op):
@@ -431,29 +449,29 @@ class Runner:
         """
         Take a snapshot of the remote PVs, and simulate the model
         """
-        LOG.debug(f'Snapshot taken for PVs: {self.snapshot_pvs}')
+        LOG.debug(f"Snapshot taken for PVs: {self.snapshot_pvs}")
         new_values = {}
         for pv in self.snapshot_pvs:
             new_values[self.pv_to_var[pv]] = {
-                'value': self.pvua_context.get(pv),
-                'ts': time.time()
+                "value": self.pvua_context.get(pv),
+                "ts": time.time(),
             }
         self.queue.put(new_values)
 
     def _monitor_callback(self, pvname, value, **kwargs):
         """Callback from p4p monitor updates"""
-        self.queue.put({self.pv_to_var[pvname]: {'value': value, 'ts': time.time()}})
+        self.queue.put({self.pv_to_var[pvname]: {"value": value, "ts": time.time()}})
 
-    def _generate_value(self, pv: str, value: Any | None, ts: float | None = None) -> Value:
+    def _generate_value(
+        self, pv: str, value: Any | None, ts: float | None = None
+    ) -> Value:
         """
         Generates a new value for posting to the PV.
         Handles alarm updates, timestamp updates, and generating the value in the first place. This handles the
         'common' metadata that the variable handlers shouldn't need to handle.
         """
         v = self.pv_handlers[pv].pack_value(
-            self.model.supported_variables[pv],
-            self.types[pv],
-            value
+            self.model.supported_variables[pv], self.types[pv], value
         )
 
         # Ensure timestamp is current
@@ -466,8 +484,8 @@ class Runner:
         """
         if ts is None:
             ts = time.time()
-        value['timeStamp']['nanoseconds'] = math.fmod(ts, 1.0) * 1e9
-        value['timeStamp']['secondsPastEpoch'] = int(ts)
+        value["timeStamp"]["nanoseconds"] = math.fmod(ts, 1.0) * 1e9
+        value["timeStamp"]["secondsPastEpoch"] = int(ts)
 
     @property
     def config(self) -> RunnerConfig:
@@ -497,8 +515,8 @@ class Runner:
             new_values = {}
             latest_ts = 0.0
             for k, g in up.items():
-                v = g['value']
-                ts = g['ts']
+                v = g["value"]
+                ts = g["ts"]
 
                 # Record newest timestamp from the inputs
                 if ts > latest_ts:
@@ -507,8 +525,7 @@ class Runner:
                 # If needed, unpack value and add it to the new list of PVs
                 if isinstance(v, Value):
                     new_values[k] = self.pv_handlers[k].unpack_value(
-                        self.model.supported_variables[k],
-                        v
+                        self.model.supported_variables[k], v
                     )
                 else:
                     new_values[k] = v
@@ -520,17 +537,26 @@ class Runner:
             self.model_state = ModelState.Simulating
 
             # Set and simulate
+            set_start = time.perf_counter()
+            LOG.debug(f"Setting model with new values: {new_values}")
             self.model.set(new_values)
+            LOG.debug(
+                f"Model set() took {(time.perf_counter() - set_start) * 1000.0:.3f} ms"
+            )
 
             # Get new simulated values
+            get_start = time.perf_counter()
             out_values = self.model.get(self.model.supported_variables)
+            LOG.debug(
+                f"Model get() took {(time.perf_counter() - get_start) * 1000.0:.3f} ms"
+            )
 
             self.model_state = ModelState.Posting
 
             # Update output PVs with new values
+            pv_update_start = time.perf_counter()
+            LOG.debug(f"writing {len(out_values)} PVs")
             for k, v in out_values.items():
-                LOG.debug(f'Post: {k} -> {v}')
-
                 # Avoid attempting to post to client monitors
                 if k in self.subs:
                     continue
@@ -539,27 +565,24 @@ class Runner:
                 pv = self.pvs.get(k)
                 if pv is not None:
                     try:
-                        pv.post(
-                            self._generate_value(
-                                k, v, latest_ts
-                            )
-                        )
+                        pv.post(self._generate_value(k, v, latest_ts))
                     except Exception as e:
-                        LOG.error(f'Error posting value for {k}: {e}')
+                        LOG.error(f"Error posting value for {k}: {e}")
 
                 # Update CA component
                 capv = self.ca_pvs.get(k)
                 if capv is not None:
                     # caproto can only understand native python types, not necessarily what the model gives us.
                     nv = self.pv_handlers[k].value_to_native(
-                        self.model.supported_variables[k],
-                        v
+                        self.model.supported_variables[k], v
                     )
                     asyncio.run(capv.write(nv, timestamp=latest_ts))
+            LOG.debug(
+                f"PV update loop took {(time.perf_counter() - pv_update_start) * 1000.0:.3f} ms"
+            )
 
             # Back to Idle
             self.model_state = ModelState.Idle
-
 
     def run(self):
         """
