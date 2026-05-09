@@ -13,6 +13,7 @@ from lume_pva.variables import VariableHandler, find_variable_handler
 from caproto.server import PVSpec, PvpropertyData, pvproperty
 from caproto import SkipWrite
 import caproto.server
+import caproto.asyncio.server
 import caproto
 import time
 import math
@@ -150,6 +151,7 @@ class Runner:
         self.pvs = {}
         self.pv_handlers = {}
         self.queue = Queue()
+        self.async_runner = asyncio.Runner()
         self.new_values = {}
         self.outputs = []
         self.types = {}
@@ -250,12 +252,17 @@ class Runner:
         # Start the server
         self.server = p4p.server.Server(providers=[self.providers])
 
-        # Start the CA server
+        # Start the CA server under the shared async context
         if len(self.pvdb.keys()) > 0:
-            threading.Thread(target=caproto.server.run, args=[self.pvdb]).start()
+            self.async_runner.run(self._run_caproto())
 
         # Kick off an initial update to propagate any defaults the model may have set
         self.queue.put({})
+
+    async def _run_caproto(self):
+        self.ca_queue = asyncio.Queue()
+        self.caproto_ctx = caproto.asyncio.server.Context(self.pvdb)
+        asyncio.create_task(self.caproto_ctx.run())
 
     @staticmethod
     def generate_config(
@@ -498,19 +505,25 @@ class Runner:
         Dequeues PV updates from the updater thread, sets values on the model, and updates outputs.
         """
         while True:
-            up = self.queue.get()
+            try:
+                up = self.queue.get_nowait()
+            except:
+                pass
+            finally:
+                # Give the CA task a bit of breathing room. This is pretty ugly, but is ultimately a problem because we're mixing async and non-async threading.
+                # Some of this can probably be switched to use async.
+                self.async_runner.run(asyncio.sleep(0.02))
 
-            # Slightly funky batching logic; Hold off on updates while we still receive PV updates within a certain window.
-            # After that window passes, run an update. This window doesnt start running until a PV update is received
-            timeo = self.update_rate
-            last = time.time()
-            while timeo > 0:
+            if self.update_rate > 0:
+                # Wait for the queue to aggregate a bunch of values within the update period, and then proceed.
+                # This is not a "true" update period, instead it aligns fixed size windows along the timeline.
+                self.async_runner.run(asyncio.sleep(self.update_rate))
                 try:
-                    up.update(self.queue.get(timeout=self.update_rate))
-                    timeo -= time.time() - last
-                    last = time.time()
+                    # Just go until we're empty
+                    while True:
+                        up.update(self.queue.get_nowait())
                 except:
-                    timeo = 0
+                    pass
 
             new_values = {}
             latest_ts = 0.0
@@ -553,6 +566,8 @@ class Runner:
 
             self.model_state = ModelState.Posting
 
+            ca_updates = []
+
             # Update output PVs with new values
             pv_update_start = time.perf_counter()
             LOG.debug(f"writing {len(out_values)} PVs")
@@ -576,13 +591,30 @@ class Runner:
                     nv = self.pv_handlers[k].value_to_native(
                         self.model.supported_variables[k], v
                     )
-                    asyncio.run(capv.write(nv, timestamp=latest_ts))
+
+                    # Batching updates yet again
+                    ca_updates.append({
+                        "pv": capv,
+                        "value": nv,
+                        "ts": latest_ts,
+                    })
+
+            if len(ca_updates) > 0:
+                # Batch CA updates a bit
+                self.async_runner.run(self._exec_ca_updates(ca_updates))
+
             LOG.debug(
                 f"PV update loop took {(time.perf_counter() - pv_update_start) * 1000.0:.3f} ms"
             )
 
             # Back to Idle
             self.model_state = ModelState.Idle
+
+    async def _exec_ca_updates(self, updates: dict):
+        for obj in updates:
+            await obj["pv"].write(obj["value"], timestamp=obj["ts"])
+        # Again, giving the CA task some breathing room.
+        await asyncio.sleep(0.05)
 
     def run(self):
         """
