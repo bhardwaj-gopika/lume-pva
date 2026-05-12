@@ -10,11 +10,6 @@ from collections.abc import Callable
 from queue import Queue
 from enum import IntEnum
 from lume_pva.variables import VariableHandler, find_variable_handler
-from caproto.server import PVSpec, PvpropertyData, pvproperty
-from caproto import SkipWrite
-import caproto.server
-import caproto.asyncio.server
-import caproto
 import time
 import math
 import p4p.server
@@ -25,24 +20,17 @@ import pvua
 import sys
 import threading
 import socket
-import asyncio
+import pcaspy
+import pcaspy.cas
 
 LOG = logging.getLogger("LumePva")
-logging.getLogger("caproto").setLevel(logging.WARNING)
-logging.getLogger("asyncio").setLevel(logging.WARNING)
+logging.getLogger("pcaspy").setLevel(logging.WARNING)
 
 VALID_PV_MODES = ["rw", "ro", "remote"]
 VALID_MODEL_MODES = ["continuous", "snapshot"]
 
 DEFAULT_MODEL_MODE = "continuous"
 DEFAULT_PV_MODE = "rw"
-
-
-class ModelState(IntEnum):
-    Idle = 0
-    Simulating = 1
-    Posting = 2
-
 
 class RunnerConfig(TypedDict):
     """
@@ -92,7 +80,7 @@ class Runner:
     """Simple runner for LUMEModel derived models"""
 
     pvs: Dict[str, SharedPV]
-    ca_pvs: Dict[str, PvpropertyData]
+    ca_pvs: Dict[str, str]
     pv_handlers: Dict[str, VariableHandler]
     # List of all output PVs that need to be updated after simulation
     outputs: list[str]
@@ -127,6 +115,43 @@ class Runner:
         def rpc(self, op: ServerOperation):
             op.done()
 
+    class CaDriver(pcaspy.Driver):
+        """ChannelAccess driver handling operations on behalf of the Runner class"""
+        def __init__(self, runner):
+            super().__init__()
+            self.runner = runner
+
+        def write(self, reason, value) -> bool:
+            # Lookup variable based on name
+            vn = self.runner.pv_to_var.get(reason, None)
+            if vn is None:
+                return False
+
+            var: Variable = self.runner.model.supported_variables.get(vn, None)
+            if var is None:
+                raise NameError(f'No variable named {vn} associated with pv {reason}')
+
+            # Reject writes to read-only PVs
+            if var.read_only:
+                return False
+
+            nv = value
+
+            # Transform int -> str for enums. Must be done before we submit it to the variable queue
+            desc = self.runner.pvdb[reason]
+            if desc["type"] == "enum":
+                # Check range
+                if value < 0 or value >= len(desc["enums"]):
+                    LOG.info(f"{reason}: Rejected invalid enum value {value} for")
+                    return False
+                nv = desc["enums"][value]
+
+            # Insert into update queue
+            self.runner.queue.put({vn: {"value": nv, "ts": time.time()}})
+
+            self.setParam(reason, value)
+            return True
+
     def __init__(
         self,
         model: LUMEModel,
@@ -151,20 +176,20 @@ class Runner:
         self.pvs = {}
         self.pv_handlers = {}
         self.queue = Queue()
-        self.async_runner = asyncio.Runner()
         self.new_values = {}
         self.outputs = []
         self.types = {}
         self.subs = {}
-        self.model_state = ModelState.Idle
         self.context = p4p.client.thread.Context()
         self.providers = {}  # Just for renaming
-        self.pvdb = {}  # For caproto
+        self.pvdb = {}  # For pcaspy
         self.snapshot_pvs = []
         self.pv_to_var: Dict[str, str] = {}  # Map pv name -> variable name
         self.var_to_pv = {}
         self.ca_pvs = {}
         self.pvua_context = pvua.Context()
+        self.ca_server: pcaspy.SimpleServer
+        self.ca_driver: Runner.CaDriver
 
         # Generate default config
         if config is None:
@@ -254,15 +279,21 @@ class Runner:
 
         # Start the CA server under the shared async context
         if len(self.pvdb.keys()) > 0:
-            self.async_runner.run(self._run_caproto())
+            self.ca_server = pcaspy.SimpleServer()
+            self.ca_server.createPV(self.config.get("prefix", ""), self.pvdb)
+            self.ca_driver = Runner.CaDriver(self)
+
+            # Spin up a thread to run the pcaspy update loop
+            self.ca_thread = threading.Thread(target=self._run_pcaspy)
+            self.ca_thread.start()
 
         # Kick off an initial update to propagate any defaults the model may have set
         self.queue.put({})
 
-    async def _run_caproto(self):
-        self.ca_queue = asyncio.Queue()
-        self.caproto_ctx = caproto.asyncio.server.Context(self.pvdb)
-        asyncio.create_task(self.caproto_ctx.run())
+    def _run_pcaspy(self):
+        """Run pcaspy forever"""
+        while True:
+            self.ca_server.process(0.1)
 
     @staticmethod
     def generate_config(
@@ -346,7 +377,7 @@ class Runner:
             self.providers[f'{prefix}{pv}'] = pvobj
 
         if 'ca' in protos:
-            # Generate a default value suitable for caproto (native types, flattened)
+            # Generate a default value suitable for pcaspy
             default_value = handler.default_value(var, flatten=True, native_python=True)
             
             # String arrays are not really supported in channel access. Skip it.
@@ -354,14 +385,10 @@ class Runner:
                 return
 
             LOG.debug(f'Creaing CA PV: pv={pv}')
-            pvd = PVSpec(
-                name=f'{pv}',
-                value=default_value,
-                put=self._on_caput,
-                **handler.ca_pvspec(var)
-            ).create()
-            self.pvdb[f'{prefix}{pv}'] = pvd
-            self.ca_pvs[var.name] = pvd
+            spec = handler.ca_pvspec(var)
+            #spec.update({"value": default_value})
+            self.pvdb[f'{prefix}{pv}'] = spec
+            self.ca_pvs[var.name] = pv
 
     def _add_client(self, pv: str, var: Variable, monitor: bool) -> bool:
         """Setup a new monitor for the specified PV"""
@@ -415,25 +442,6 @@ class Runner:
 
         self.pvs[pv] = SharedPV(initial=val)
         self.providers[f"{self.config['prefix']}{pv}"] = self.pvs[pv]
-
-    async def _on_caput(self, instance: PvpropertyData, value: Any):
-        # FIXME: This sucks big time! This callback will always be run whenever we set the value, even internally with pv.write/write_metadata
-        # So, we'll need to ignore internal updates manually to avoid infinite loops, writes to read-only PVs, etc.
-        # This *could* result in caputs getting dropped if they arrive right as the model is publishing results, though!
-        if self.model_state == ModelState.Posting:
-            return
-        var = self.pv_to_var.get(instance.name)
-        if var is None:
-            LOG.warning(
-                f"CA: Unknown variable {instance.name} has no entry in PV -> VAR mapping"
-            )
-            return
-        if self.model.supported_variables[var].read_only:
-            LOG.warning(
-                f'CA: Rejected write to read-only variable "{var}" via PV "{instance.name}"'
-            )
-            raise PermissionError("Read only PV")
-        self.queue.put({var: {"value": value, "ts": time.time()}})
 
     def _create_control_pvs(self):
         """Create any required control PVs"""
@@ -505,26 +513,14 @@ class Runner:
         Dequeues PV updates from the updater thread, sets values on the model, and updates outputs.
         """
         while True:
-            # Loop until there's data available
-            while True:
-                try:
-                    up = self.queue.get_nowait()
-                    break
-                except:
-                    pass
-                finally:
-                    # Give the CA task a bit of breathing room. This is pretty ugly, but is ultimately a problem because we're mixing async and non-async threading.
-                    # Some of this can probably be switched to use async.
-                    self.async_runner.run(asyncio.sleep(0.05))
+            # Wait for new data to come in
+            up = self.queue.get()
 
-            if self.update_rate > 0:
-                # Wait for the queue to aggregate a bunch of values within the update period, and then proceed.
-                # This is not a "true" update period, instead it aligns fixed size windows along the timeline.
-                self.async_runner.run(asyncio.sleep(self.update_rate))
+            # Wait for a time window of 'update_rate' seconds to pass before continuing
+            until = time.time() + self.update_rate
+            while time.time() < until:
                 try:
-                    # Just go until we're empty
-                    while True:
-                        up.update(self.queue.get_nowait())
+                    up.update(self.queue.get_nowait())
                 except:
                     pass
 
@@ -550,8 +546,6 @@ class Runner:
             if latest_ts <= 0:
                 latest_ts = time.time()
 
-            self.model_state = ModelState.Simulating
-
             # Set and simulate
             set_start = time.perf_counter()
             LOG.debug(f"Setting model with new values: {new_values}")
@@ -560,16 +554,12 @@ class Runner:
                 f"Model set() took {(time.perf_counter() - set_start) * 1000.0:.3f} ms"
             )
 
-            self.async_runner.run(asyncio.sleep(0.05))
-
             # Get new simulated values
             get_start = time.perf_counter()
             out_values = self.model.get(self.model.supported_variables)
             LOG.debug(
                 f"Model get() took {(time.perf_counter() - get_start) * 1000.0:.3f} ms"
             )
-
-            ca_updates = []
 
             # Update output PVs with new values
             pv_update_start = time.perf_counter()
@@ -589,37 +579,20 @@ class Runner:
 
                 # Update CA component
                 capv = self.ca_pvs.get(k)
-                if capv is not None:
-                    # caproto can only understand native python types, not necessarily what the model gives us.
+                if capv is not None and self.ca_driver is not None:
+                    # pcaspy can only understand native python types, not necessarily what the model gives us.
                     nv = self.pv_handlers[k].value_to_native(
                         self.model.supported_variables[k], v
                     )
 
-                    # Batching updates yet again
-                    ca_updates.append({
-                        "pv": capv,
-                        "value": nv,
-                        "ts": latest_ts,
-                    })
+                    self.ca_driver.setParam(capv, nv, pcaspy.cas.epicsTimeStamp.fromPosixTimeStamp(time.time()))
 
-            self.model_state = ModelState.Posting
-
-            if len(ca_updates) > 0:
-                # Batch CA updates a bit
-                self.async_runner.run(self._exec_ca_updates(ca_updates))
+            if self.ca_driver is not None:
+                self.ca_driver.updatePVs()
 
             LOG.debug(
                 f"PV update loop took {(time.perf_counter() - pv_update_start) * 1000.0:.3f} ms"
             )
-
-            # Back to Idle
-            self.model_state = ModelState.Idle
-
-    async def _exec_ca_updates(self, updates: dict):
-        for obj in updates:
-            await obj["pv"].write(obj["value"], timestamp=obj["ts"])
-        # Again, giving the CA task some breathing room.
-        await asyncio.sleep(0.05)
 
     def run(self):
         """
