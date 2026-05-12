@@ -505,14 +505,17 @@ class Runner:
         Dequeues PV updates from the updater thread, sets values on the model, and updates outputs.
         """
         while True:
-            try:
-                up = self.queue.get_nowait()
-            except:
-                pass
-            finally:
-                # Give the CA task a bit of breathing room. This is pretty ugly, but is ultimately a problem because we're mixing async and non-async threading.
-                # Some of this can probably be switched to use async.
-                self.async_runner.run(asyncio.sleep(0.02))
+            # Loop until there's data available
+            while True:
+                try:
+                    up = self.queue.get_nowait()
+                    break
+                except:
+                    pass
+                finally:
+                    # Give the CA task a bit of breathing room. This is pretty ugly, but is ultimately a problem because we're mixing async and non-async threading.
+                    # Some of this can probably be switched to use async.
+                    self.async_runner.run(asyncio.sleep(0.05))
 
             if self.update_rate > 0:
                 # Wait for the queue to aggregate a bunch of values within the update period, and then proceed.
@@ -564,8 +567,6 @@ class Runner:
                 f"Model get() took {(time.perf_counter() - get_start) * 1000.0:.3f} ms"
             )
 
-            self.model_state = ModelState.Posting
-
             ca_updates = []
 
             # Update output PVs with new values
@@ -598,6 +599,8 @@ class Runner:
                         "value": nv,
                         "ts": latest_ts,
                     })
+
+            self.model_state = ModelState.Posting
 
             if len(ca_updates) > 0:
                 # Batch CA updates a bit
