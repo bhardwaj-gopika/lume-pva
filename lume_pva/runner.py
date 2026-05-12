@@ -585,7 +585,7 @@ class Runner:
                         self.model.supported_variables[k], v
                     )
 
-                    self.ca_driver.setParam(capv, nv, pcaspy.cas.epicsTimeStamp.fromPosixTimeStamp(time.time()))
+                    self.ca_driver.setParam(capv, nv, pcaspy.cas.epicsTimeStamp.fromPosixTimeStamp(latest_ts))
 
             if self.ca_driver is not None:
                 self.ca_driver.updatePVs()
