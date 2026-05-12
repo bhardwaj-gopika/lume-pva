@@ -560,6 +560,8 @@ class Runner:
                 f"Model set() took {(time.perf_counter() - set_start) * 1000.0:.3f} ms"
             )
 
+            self.async_runner.run(asyncio.sleep(0.05))
+
             # Get new simulated values
             get_start = time.perf_counter()
             out_values = self.model.get(self.model.supported_variables)
