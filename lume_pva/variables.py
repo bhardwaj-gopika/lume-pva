@@ -1,21 +1,38 @@
+import logging
 from abc import ABC, abstractmethod
-from lume.variables import Variable, ScalarVariable, NDVariable, BoolVariable, IntVariable, StrVariable, EnumVariable
-from lume_torch.variables import TorchScalarVariable, TorchNDVariable
-from typing import Any, Dict
-from p4p import Type, Value
-from p4p.nt import NTScalar, NTNDArray, NTEnum
-from lume_pva.epics import epicsAlarmSeverity, epicsAlarmStatus
-from numpy import ndarray
-from caproto import ChannelType
+from typing import Any, Generic, TypeVar
+
 import numpy as np
 import torch
+from caproto import ChannelType
+from lume.variables import (
+    BoolVariable,
+    EnumVariable,
+    IntVariable,
+    NDVariable,
+    ScalarVariable,
+    StrVariable,
+    Variable,
+)
+from lume_torch.variables import TorchNDVariable, TorchScalarVariable
+from numpy import ndarray
+from p4p import Type, Value
+from p4p.nt import NTEnum, NTNDArray, NTScalar
 
-class VariableHandler(ABC):
+from lume_pva.epics import epicsAlarmSeverity, epicsAlarmStatus
+
+logger = logging.getLogger(__name__)
+
+
+VariableT = TypeVar("VariableT", bound=Variable)
+
+
+class VariableHandler(ABC, Generic[VariableT]):
     """Base class for all variable type handlers"""
     def __init__(self):
         pass
     
-    def create_type(self, variable: Variable) -> Type:
+    def create_type(self, variable: VariableT) -> Type:
         """
         Creates p4p Type describing the Variable
         
@@ -32,7 +49,7 @@ class VariableHandler(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def pack_value(self, variable: Variable, type: Type, value: Any | None) -> Value:
+    def pack_value(self, variable: VariableT, type_: Type, value: Any | None) -> Value:
         """
         Generates a p4p Value type off of a Variable and its associated value
         
@@ -51,7 +68,7 @@ class VariableHandler(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def unpack_value(self, variable: Variable, value: Value) -> Any:
+    def unpack_value(self, variable: VariableT, value: Value) -> Any:
         """
         Unpacks a p4p Value into the native Python type
         
@@ -69,7 +86,7 @@ class VariableHandler(ABC):
         """
         raise NotImplementedError()
     
-    def is_supported(self, variable: Variable) -> bool:
+    def is_supported(self, variable: VariableT) -> bool:
         """
         Checks if a variable can be supported by the handler.
         Used to determine if the variable lives within the bounds of the handler, i.e. the variable's specific dtype being supported.
@@ -87,7 +104,7 @@ class VariableHandler(ABC):
         return True
 
     @abstractmethod
-    def default_value(self, variable: Variable, flatten: bool = False, native_python: bool = False) -> Any:
+    def default_value(self, variable: VariableT, flatten: bool = False, native_python: bool = False) -> Any:
         """
         Fetches the default value for the Variable.
         This will always return a valid object that matches the requested dtype or underlying datatype
@@ -106,7 +123,7 @@ class VariableHandler(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def value_to_native(self, variable: Variable, value: Any) -> Any:
+    def value_to_native(self, variable: VariableT, value: Any) -> Any:
         """
         Performs fixups for the specified value so caproto can understand it. For most variable types, this function
         won't need to do anything (default impl is fine). For variable types dealing with Numpy or Tensor types, this
@@ -122,7 +139,7 @@ class VariableHandler(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def native_to_value(self, variable: Variable, value: Any) -> Any:
+    def native_to_value(self, variable: VariableT, value: Any) -> Any:
         """
         Unpacks (converts) the native Python type to a type that underlying variable can understand.
 
@@ -140,7 +157,7 @@ class VariableHandler(ABC):
         """
         raise NotImplementedError()
 
-    def ca_pvspec(self, variable: Variable) -> dict:
+    def ca_pvspec(self, variable: VariableT) -> dict:
         """
         Returns a dict of additional to be passed to caproto's PVSpec.
         Use this to set max_elements, the record type, etc., if necessary.
@@ -159,10 +176,10 @@ class VariableHandler(ABC):
         return {}
 
 
-class ScalarVariableHandler(VariableHandler):
+class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
     """Variable handler for LUME ScalarVariable, and the TorchScalarVariable type"""
 
-    ScalarType = int | float | np.floating
+    ScalarType = int | float | np.floating | np.integer
 
     @staticmethod
     def set_metadata(variable: Variable, v: Value, value: Any) -> None:
@@ -208,8 +225,7 @@ class ScalarVariableHandler(VariableHandler):
         if isinstance(variable, IntVariable):
             value = int(value)
 
-        if not isinstance(value, (float, int, np.floating)):
-            raise ValueError(f'ScalarVariable {variable.name} expects float, int or np.floating, but got {type(value)}')
+        variable.validate_value(value)
 
         v = Value(
             type_, {'value': float(value)}
@@ -239,7 +255,7 @@ class ScalarVariableHandler(VariableHandler):
     def native_to_value(self, variable: ScalarVariable | IntVariable, value: float | int) -> ScalarType:
         return value
 
-class NDVariableHandler(VariableHandler):
+class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
     """Variable handler for LUME NDVariable type"""
 
     def _typecode(self, variable: NDVariable | TorchNDVariable) -> str:
@@ -295,8 +311,7 @@ class NDVariableHandler(VariableHandler):
         if value is None: # Use default if not provided
             value = self.default_value(variable)
 
-        if not isinstance(value, ndarray):
-            raise ValueError(f'NDVariable expectes an ndarray, but got {type(value)}')
+        variable.validate_value(value)
 
         # Convert to numpy type for p4p's sake
         if isinstance(variable, TorchNDVariable):
@@ -357,7 +372,8 @@ class NDVariableHandler(VariableHandler):
         else:
             raise NotImplementedError()
 
-class TorchScalarVariableHandler(VariableHandler):
+
+class TorchScalarVariableHandler(VariableHandler[TorchScalarVariable]):
     """Handler for TorchScalarVariable"""
 
     TorchScalarType = torch.Tensor | float | int
@@ -369,8 +385,7 @@ class TorchScalarVariableHandler(VariableHandler):
         if value is None: # Use default if not provided
             value = self.default_value(variable)
 
-        if not isinstance(value, self.TorchScalarType):
-            raise ValueError(f'ScalarVariable {variable.name} expects torch.Tensor, int or float, but got {type(value)}')
+        variable.validate_value(value)
 
         v = Value(
             type_, {'value': float(value)}
@@ -390,8 +405,9 @@ class TorchScalarVariableHandler(VariableHandler):
     def value_to_native(self, variable: TorchScalarVariable, value: TorchScalarType) -> float:
         return float(value)
 
-class SimpleScalarHandler(VariableHandler):
-    """Handler for StrVariable"""
+
+class SimpleScalarHandler(VariableHandler[StrVariable | BoolVariable]):
+    """Handler for StrVariable, BoolVariable"""
 
     def create_type(self, variable: StrVariable | BoolVariable):
         return NTScalar.buildType('s' if isinstance(variable, StrVariable) else '?')
@@ -400,6 +416,7 @@ class SimpleScalarHandler(VariableHandler):
         if value is None:
             value = self.default_value(variable)
 
+        variable.validate_value(value)
         if isinstance(variable, StrVariable) and not isinstance(value, str):
             raise ValueError(f'StrVariable {variable.name} expects str, but got {type(value)}')
         
