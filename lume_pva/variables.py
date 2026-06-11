@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
 import numpy as np
-import torch
 from caproto import ChannelType
 from lume.variables import (
     BoolVariable,
@@ -14,14 +15,42 @@ from lume.variables import (
     StrVariable,
     Variable,
 )
-from lume_torch.variables import TorchNDVariable, TorchScalarVariable
 from numpy import ndarray
 from p4p import Type, Value
 from p4p.nt import NTEnum, NTNDArray, NTScalar
 
 from lume_pva.epics import epicsAlarmSeverity, epicsAlarmStatus
 
+# torch and lume-torch are optional; the Torch* variable types are only
+# supported when the 'torch' extra is installed.
+try:
+    import torch
+    from lume_torch.variables import TorchNDVariable, TorchScalarVariable
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TorchNDVariable = None
+    TorchScalarVariable = None
+    TORCH_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+# torch dtype -> NTNDArray typecode. Empty when torch is not installed; torch dtypes
+# cannot be referenced in match patterns without torch present, hence the lookup table.
+_TORCH_TYPECODES = {} if not TORCH_AVAILABLE else {
+    torch.float64: 'doubleValue',
+    torch.float32: 'floatValue',
+    torch.int8: 'byteValue',
+    torch.bool: 'booleanValue',
+    torch.int16: 'shortValue',
+    torch.int32: 'intValue',
+    torch.int64: 'longValue',
+    torch.uint8: 'ubyteValue',
+    torch.uint16: 'ushortValue',
+    torch.uint32: 'uintValue',
+    torch.uint64: 'ulongValue',
+}
 
 
 VariableT = TypeVar("VariableT", bound=Variable)
@@ -259,28 +288,31 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
     """Variable handler for LUME NDVariable type"""
 
     def _typecode(self, variable: NDVariable | TorchNDVariable) -> str:
+        typecode = _TORCH_TYPECODES.get(variable.dtype)
+        if typecode is not None:
+            return typecode
         match variable.dtype:
-            case np.float64 | torch.float64:
+            case np.float64:
                 return 'doubleValue'
-            case np.float32 | torch.float32:
+            case np.float32:
                 return 'floatValue'
-            case np.byte | torch.int8:
+            case np.byte:
                 return 'byteValue'
-            case np.bool | torch.bool:
+            case np.bool:
                 return 'booleanValue'
-            case np.int16 | torch.int16:
+            case np.int16:
                 return 'shortValue'
-            case np.int32 | torch.int32:
+            case np.int32:
                 return 'intValue'
-            case np.int64 | torch.int64:
+            case np.int64:
                 return 'longValue'
-            case np.ubyte | torch.uint8:
+            case np.ubyte:
                 return 'ubyteValue'
-            case np.uint16 | torch.uint16:
+            case np.uint16:
                 return 'ushortValue'
-            case np.uint32 | torch.uint32:
+            case np.uint32:
                 return 'uintValue'
-            case np.uint64 | torch.uint64:
+            case np.uint64:
                 return 'ulongValue'
             case np.str_ | np.dtypes.StringDType():
                 return 'stringValue'
@@ -314,7 +346,7 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
         variable.validate_value(value)
 
         # Convert to numpy type for p4p's sake
-        if isinstance(variable, TorchNDVariable):
+        if TORCH_AVAILABLE and isinstance(variable, TorchNDVariable):
             value = value.numpy()
 
         v = Value(
@@ -337,7 +369,7 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
     def unpack_value(self, variable: NDVariable | TorchNDVariable, value: Value) -> ndarray | torch.Tensor:
         arr = value['value']
         if isinstance(arr, np.ndarray):
-            if isinstance(variable, TorchNDVariable):
+            if TORCH_AVAILABLE and isinstance(variable, TorchNDVariable):
                 return torch.reshape(torch.from_numpy(arr), variable.shape)
             else:
                 return arr.reshape(variable.shape)
@@ -349,7 +381,7 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
         if value is None:
             if variable.dtype in [np.str_, np.dtypes.StringDType()]:
                 value = np.full(shape=(variable.shape), fill_value='', dtype=variable.dtype)
-            elif isinstance(variable, TorchNDVariable):
+            elif TORCH_AVAILABLE and isinstance(variable, TorchNDVariable):
                 value = torch.zeros(size=variable.shape, dtype=variable.dtype)
             elif isinstance(variable, NDVariable):
                 value = np.zeros(shape=variable.shape, dtype=variable.dtype)
@@ -365,7 +397,7 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
         return value.flatten().tolist()
     
     def native_to_value(self, variable: NDVariable | TorchNDVariable, value: list) -> ndarray | torch.Tensor:
-        if isinstance(variable, TorchNDVariable):
+        if TORCH_AVAILABLE and isinstance(variable, TorchNDVariable):
             return torch.Tensor(value, size=variable.shape, dtype=variable.dtype)
         elif isinstance(variable, NDVariable):
             return np.array(value, dtype=variable.dtype).reshape(variable.shape)
@@ -373,37 +405,38 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
             raise NotImplementedError()
 
 
-class TorchScalarVariableHandler(VariableHandler[TorchScalarVariable]):
-    """Handler for TorchScalarVariable"""
+if TORCH_AVAILABLE:
+    class TorchScalarVariableHandler(VariableHandler[TorchScalarVariable]):
+        """Handler for TorchScalarVariable. Only available when torch and lume-torch are installed."""
 
-    TorchScalarType = torch.Tensor | float | int
+        TorchScalarType = torch.Tensor | float | int
 
-    def create_type(self, variable: TorchScalarVariable) -> Type:
-        return NTScalar.buildType('d', control=True, display=True)
+        def create_type(self, variable: TorchScalarVariable) -> Type:
+            return NTScalar.buildType('d', control=True, display=True)
 
-    def pack_value(self, variable: TorchScalarVariable, type_: Type, value: TorchScalarType | None) -> Value:
-        if value is None: # Use default if not provided
-            value = self.default_value(variable)
+        def pack_value(self, variable: TorchScalarVariable, type_: Type, value: TorchScalarType | None) -> Value:
+            if value is None: # Use default if not provided
+                value = self.default_value(variable)
 
-        variable.validate_value(value)
+            variable.validate_value(value)
 
-        v = Value(
-            type_, {'value': float(value)}
-        )
-        ScalarVariableHandler.set_metadata(variable, v, float(value))
-        return v
+            v = Value(
+                type_, {'value': float(value)}
+            )
+            ScalarVariableHandler.set_metadata(variable, v, float(value))
+            return v
 
-    def unpack_value(self, variable: TorchScalarVariable, value: Value) -> float:
-        return float(value['value'])
+        def unpack_value(self, variable: TorchScalarVariable, value: Value) -> float:
+            return float(value['value'])
 
-    def default_value(self, variable: TorchScalarVariable, flatten: bool = False, native_python: bool = False):
-        return variable.default_value if variable.default_value is not None else 0.0
+        def default_value(self, variable: TorchScalarVariable, flatten: bool = False, native_python: bool = False):
+            return variable.default_value if variable.default_value is not None else 0.0
 
-    def native_to_value(self, variable: TorchScalarVariable, value: float) -> TorchScalarType:
-        return value
-    
-    def value_to_native(self, variable: TorchScalarVariable, value: TorchScalarType) -> float:
-        return float(value)
+        def native_to_value(self, variable: TorchScalarVariable, value: float) -> TorchScalarType:
+            return value
+
+        def value_to_native(self, variable: TorchScalarVariable, value: TorchScalarType) -> float:
+            return float(value)
 
 
 class SimpleScalarHandler(VariableHandler[StrVariable | BoolVariable]):
@@ -508,10 +541,11 @@ def find_variable_handler(type) -> VariableHandler | None:
         ScalarVariable: ScalarVariableHandler(),
         IntVariable: ScalarVariableHandler(),
         NDVariable: NDVariableHandler(),
-        TorchScalarVariable : TorchScalarVariableHandler(),
-        TorchNDVariable: NDVariableHandler(),
         BoolVariable: SimpleScalarHandler(),
         StrVariable: SimpleScalarHandler(),
         EnumVariable: EnumVariableHandler(),
     }
+    if TORCH_AVAILABLE:
+        VARIABLE_HANDLERS[TorchScalarVariable] = TorchScalarVariableHandler()
+        VARIABLE_HANDLERS[TorchNDVariable] = NDVariableHandler()
     return VARIABLE_HANDLERS.get(type, None)

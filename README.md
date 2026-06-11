@@ -101,12 +101,16 @@ Supported metadata:
 
 ### `TorchScalarVariable`
 
+Requires the `torch` extra (`pip install lume-pva[torch]`).
+
 Represented as **NTScalar** with a `double` value field.
 
 Supported metadata:
 * `timestamp`
 
 ### `TorchNDVariable`
+
+Requires the `torch` extra (`pip install lume-pva[torch]`).
 
 Represented as **NTNDArray** with data representation matching the Tensor shape and dtype.
 
