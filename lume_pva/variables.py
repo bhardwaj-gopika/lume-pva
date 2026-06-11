@@ -52,6 +52,22 @@ _TORCH_TYPECODES = {} if not TORCH_AVAILABLE else {
     torch.uint64: 'ulongValue',
 }
 
+_NUMPY_TYPECODES = {
+    np.float64: 'doubleValue',
+    np.float32: 'floatValue',
+    np.byte: 'byteValue',
+    np.bool: 'booleanValue',
+    np.int16: 'shortValue',
+    np.int32: 'intValue',
+    np.int64: 'longValue',
+    np.ubyte: 'ubyteValue',
+    np.uint16: 'ushortValue',
+    np.uint32: 'uintValue',
+    np.uint64: 'ulongValue',
+    np.str_: 'stringValue',
+    np.dtypes.StringDType(): 'stringValue'
+}
+
 
 VariableT = TypeVar("VariableT", bound=Variable)
 
@@ -291,40 +307,19 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
         typecode = _TORCH_TYPECODES.get(variable.dtype)
         if typecode is not None:
             return typecode
-        match variable.dtype:
-            case np.float64:
-                return 'doubleValue'
-            case np.float32:
-                return 'floatValue'
-            case np.byte:
-                return 'byteValue'
-            case np.bool:
-                return 'booleanValue'
-            case np.int16:
-                return 'shortValue'
-            case np.int32:
-                return 'intValue'
-            case np.int64:
-                return 'longValue'
-            case np.ubyte:
-                return 'ubyteValue'
-            case np.uint16:
-                return 'ushortValue'
-            case np.uint32:
-                return 'uintValue'
-            case np.uint64:
-                return 'ulongValue'
-            case np.str_ | np.dtypes.StringDType():
-                return 'stringValue'
-            case _:
-                raise TypeError(f'{variable.name}: Unsupported type "{variable.dtype.__class__}"')
+
+        typecode = _NUMPY_TYPECODES.get(variable.dtype)
+        if typecode is not None:
+            return typecode
+
+        raise TypeError(f'{variable.name}: Unsupported type "{variable.dtype.__class__}"')
 
     def is_supported(self, variable: NDVariable | TorchNDVariable):
         """Checks if the variable has a supported dtype"""
         try:
             self._typecode(variable)
             return True
-        except:
+        except TypeError:
             return False
 
     def create_type(self, variable: NDVariable | TorchNDVariable) -> Type:
