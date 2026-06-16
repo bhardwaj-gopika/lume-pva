@@ -69,4 +69,4 @@ namespaces = false
 [tool.pytest.ini_options]
 log_cli_level = "info"
 log_level = "debug"
-testpaths = ["tests"]
+testpaths = ["lume_pva/tests"]
