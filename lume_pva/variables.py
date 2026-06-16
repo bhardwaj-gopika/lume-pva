@@ -292,10 +292,10 @@ class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
             return float(v)
 
     def value_to_native(self, variable: ScalarVariable | IntVariable, value: ScalarType) -> Any:
-        if isinstance(variable, ScalarVariable):
-            return float(value)
-        else:
+        if isinstance(variable, IntVariable):
             return int(value)
+        else:
+            return float(value)
 
     def native_to_value(self, variable: ScalarVariable | IntVariable, value: float | int) -> ScalarType:
         return value
@@ -531,8 +531,8 @@ class EnumVariableHandler(VariableHandler):
         }
 
 
-def find_variable_handler(type) -> VariableHandler | None:
-    VARIABLE_HANDLERS = {
+def find_variable_handler(type: type[Variable]) -> VariableHandler | None:
+    VARIABLE_HANDLERS: dict[type[Variable], VariableHandler] = {
         ScalarVariable: ScalarVariableHandler(),
         IntVariable: ScalarVariableHandler(),
         NDVariable: NDVariableHandler(),
