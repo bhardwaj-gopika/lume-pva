@@ -13,13 +13,12 @@ keywords = ["machine learning", "accelerator physics"]
 classifiers = [
     "Natural Language :: English",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pydantic",
     "numpy",
@@ -69,4 +68,4 @@ namespaces = false
 [tool.pytest.ini_options]
 log_cli_level = "info"
 log_level = "debug"
-testpaths = ["tests"]
+testpaths = ["lume_pva/tests"]

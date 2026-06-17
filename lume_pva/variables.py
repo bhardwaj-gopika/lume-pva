@@ -53,18 +53,18 @@ _TORCH_TYPECODES = {} if not TORCH_AVAILABLE else {
 }
 
 _NUMPY_TYPECODES = {
-    np.float64: 'doubleValue',
-    np.float32: 'floatValue',
-    np.byte: 'byteValue',
-    np.bool: 'booleanValue',
-    np.int16: 'shortValue',
-    np.int32: 'intValue',
-    np.int64: 'longValue',
-    np.ubyte: 'ubyteValue',
-    np.uint16: 'ushortValue',
-    np.uint32: 'uintValue',
-    np.uint64: 'ulongValue',
-    np.str_: 'stringValue',
+    np.dtype(np.float64): 'doubleValue',
+    np.dtype(np.float32): 'floatValue',
+    np.dtype(np.byte): 'byteValue',
+    np.dtype(np.bool): 'booleanValue',
+    np.dtype(np.int16): 'shortValue',
+    np.dtype(np.int32): 'intValue',
+    np.dtype(np.int64): 'longValue',
+    np.dtype(np.ubyte): 'ubyteValue',
+    np.dtype(np.uint16): 'ushortValue',
+    np.dtype(np.uint32): 'uintValue',
+    np.dtype(np.uint64): 'ulongValue',
+    np.dtype(np.str_): 'stringValue',
     np.dtypes.StringDType(): 'stringValue'
 }
 
@@ -292,10 +292,10 @@ class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
             return float(v)
 
     def value_to_native(self, variable: ScalarVariable | IntVariable, value: ScalarType) -> Any:
-        if isinstance(variable, ScalarVariable):
-            return float(value)
-        else:
+        if isinstance(variable, IntVariable):
             return int(value)
+        else:
+            return float(value)
 
     def native_to_value(self, variable: ScalarVariable | IntVariable, value: float | int) -> ScalarType:
         return value
@@ -531,8 +531,8 @@ class EnumVariableHandler(VariableHandler):
         }
 
 
-def find_variable_handler(type) -> VariableHandler | None:
-    VARIABLE_HANDLERS = {
+def find_variable_handler(type: type[Variable]) -> VariableHandler | None:
+    VARIABLE_HANDLERS: dict[type[Variable], VariableHandler] = {
         ScalarVariable: ScalarVariableHandler(),
         IntVariable: ScalarVariableHandler(),
         NDVariable: NDVariableHandler(),
