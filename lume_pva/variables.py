@@ -502,7 +502,7 @@ class SimpleScalarHandler(VariableHandler[StrVariable | BoolVariable]):
     def ca_pvspec(self, variable: StrVariable | BoolVariable):
         if isinstance(variable, StrVariable):
             # Need to force record type and length for strings, otherwise default_value dictates the length.
-            return {'type': 'string', 'count': 1024}
+            return {'type': 'char', 'count': 1024}
         else:
             return {}
 
