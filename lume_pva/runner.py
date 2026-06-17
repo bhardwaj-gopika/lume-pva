@@ -14,14 +14,12 @@ import time
 import math
 import p4p.server
 import p4p.client.thread
-import p4p.nt
 import logging
 import pvua
-import sys
 import threading
-import socket
 import pcaspy
 import pcaspy.cas
+import os
 
 LOG = logging.getLogger("LumePva")
 logging.getLogger("pcaspy").setLevel(logging.WARNING)
@@ -279,6 +277,8 @@ class Runner:
 
         # Start the CA server under the shared async context
         if len(self.pvdb.keys()) > 0:
+            if "EPICS_CA_MAX_ARRAY_BYTES" not in os.environ:
+                os.environ["EPICS_CA_MAX_ARRAY_BYTES"] = str(self.config["max_array_bytes"])
             self.ca_server = pcaspy.SimpleServer()
             self.ca_server.createPV(self.config.get("prefix", ""), self.pvdb)
             self.ca_driver = Runner.CaDriver(self)
@@ -326,6 +326,7 @@ class Runner:
             "description": "",
             "remote_model_mode": "continuous",
             "prefix": prefix,
+            "max_array_bytes": 80000000,
             "variables": {},
         }
         for k, v in model.supported_variables.items():
