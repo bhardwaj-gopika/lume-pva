@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import operator
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
+from functools import reduce
 
 import numpy as np
 from caproto import ChannelType
