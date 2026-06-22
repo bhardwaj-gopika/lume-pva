@@ -7,7 +7,6 @@ from typing import Any, Generic, TypeVar
 from functools import reduce
 
 import numpy as np
-from caproto import ChannelType
 from lume.variables import (
     BoolVariable,
     EnumVariable,
