@@ -36,6 +36,14 @@ from lume_pva.variables import (
 )
 
 
+class DerivedScalarVariable(ScalarVariable):
+    pass
+
+
+class DerivedBoolVariable(BoolVariable):
+    pass
+
+
 @pytest.mark.parametrize(
     ("variable", "value", "expected", "expected_type"),
     [
@@ -585,3 +593,20 @@ def test_should_return_matching_handler_for_each_variable_type(
 
 def test_should_return_none_for_unknown_type() -> None:
     assert find_variable_handler(dict) is None
+
+
+@pytest.mark.parametrize(
+    ("variable_type", "expected_handler_type"),
+    [
+        (DerivedScalarVariable, ScalarVariableHandler),
+        (DerivedBoolVariable, SimpleScalarHandler),
+    ],
+)
+def test_should_resolve_handler_for_variable_subclasses(
+    variable_type: type[Variable],
+    expected_handler_type: type[VariableHandler],
+) -> None:
+    handler = find_variable_handler(variable_type)
+
+    assert isinstance(handler, expected_handler_type)
+    assert isinstance(handler, VariableHandler)

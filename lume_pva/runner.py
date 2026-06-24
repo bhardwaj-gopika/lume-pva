@@ -209,7 +209,7 @@ class Runner:
 
             handler = find_variable_handler(type(var))
             if handler is None:
-                if type(var) is ParticleGroupVariable:
+                if isinstance(var, ParticleGroupVariable):
                     continue  # ParticleGroupVariable is a special case that doesn't have a handler
                 raise RuntimeError(f'Unknown type "{type(var)}"')
 
