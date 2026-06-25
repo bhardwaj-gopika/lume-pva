@@ -304,9 +304,13 @@ class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
     def ca_pvspec(self, variable: ScalarVariable | IntVariable) -> dict:
         value_range = getattr(variable, "value_range", (0, 0))
         value_range = (0, 0) if value_range is None else value_range
+        if isinstance(variable, IntVariable):
+            type_ = "int"
+        else:
+            type_ = "float"
         return {
             "unit": variable.unit,
-            "type": "float" if isinstance(variable, ScalarVariable) else "int",
+            "type": type_,
             "lolim": value_range[0],
             "hilim": value_range[1],
             "lolo": value_range[0],
