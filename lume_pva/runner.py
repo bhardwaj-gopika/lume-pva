@@ -30,6 +30,28 @@ VALID_MODEL_MODES = ["continuous", "snapshot"]
 DEFAULT_MODEL_MODE = "continuous"
 DEFAULT_PV_MODE = "rw"
 
+
+class RunnerVariable(TypedDict):
+    """
+    Attributes
+    ----------
+    name : str
+        Name of the input or output. Must match one of the model's supported variables.
+    pv : str
+        Name of the PV to serve or consume. If not provided, it will be defaulted to 'name'
+    mode : str
+        Operation mode of the PV. May be one of:
+        - 'ro': Read-only PV served by this server
+        - 'rw': Read-write PV served by this server. Errors if Variable.read_only
+        - 'remote': Remote PV living on some other remote machine.
+        Default is 'rw'
+    """
+
+    name: str
+    pv: str
+    mode: str
+
+
 class RunnerConfig(TypedDict):
     """
     Attributes
@@ -47,26 +69,6 @@ class RunnerConfig(TypedDict):
     protocol : list[str]
         List of supported protocols
     """
-
-    class RunnerVariable(TypedDict):
-        """
-        Attributes
-        ----------
-        name : str
-            Name of the input or output. Must match one of the model's supported variables.
-        pv : str
-            Name of the PV to serve or consume. If not provided, it will be defaulted to 'name'
-        mode : str
-            Operation mode of the PV. May be one of:
-            - 'ro': Read-only PV served by this server
-            - 'rw': Read-write PV served by this server. Errors if Variable.read_only
-            - 'remote': Remote PV living on some other remote machine.
-            Default is 'rw'
-        """
-
-        name: str
-        pv: str
-        mode: str
 
     remote_model_mode: str
     prefix: str
