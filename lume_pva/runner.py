@@ -327,7 +327,7 @@ class Runner:
             "description": "",
             "remote_model_mode": "continuous",
             "prefix": prefix,
-            "max_array_bytes": os.environ["EPICS_CA_MAX_ARRAY_BYTES"],
+            "max_array_bytes": os.environ.get("EPICS_CA_MAX_ARRAY_BYTES", "80000000"),
             "variables": {},
         }
         for k, v in model.supported_variables.items():
