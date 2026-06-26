@@ -108,7 +108,7 @@ class SimpleSimulator():
         self.driver = pcaspy.Driver()
 
         # Run thread
-        self.thread = threading.Thread(target=self._thread_proc)
+        self.thread = threading.Thread(target=self._thread_proc, daemon=True)
         self.thread.start()
 
     def _thread_proc(self):
@@ -133,16 +133,16 @@ class SimpleSimulator():
 
     def _update_pvs(self):
         """Update the simulated PVs"""
-        self.math_globals['t'] = time.time()
+        self.math_globals['t'] = time.monotonic()
         for k, v in self.pvs.items():
             nv = None
             typ = v.get('mode', 'random_uniform')
             lastup = v.get('last_updated', 0)
 
-            if time.time() - lastup < v.get('rate', 0.1):
+            if time.monotonic() - lastup < v.get('rate', 0.1):
                 continue
 
-            v['last_updated'] = time.time()
+            v['last_updated'] = time.monotonic()
 
             # Uniform range update
             if typ == 'random_uniform':
@@ -157,7 +157,7 @@ class SimpleSimulator():
                 assert 'expr' in v
                 if v['type'] == 'array1d':
                     nv = self._generate_array(
-                        time.time(),
+                        time.monotonic(),
                         v.get('rate', 0.1),
                         v.get('nvalues', 512),
                         v['expr']
@@ -174,8 +174,8 @@ class SimpleSimulator():
 
             # Update the value if we have a new one
             if nv is not None:
-                self.providers[k].post(nv, timestamp=time.time())
-                self.driver.setParam(k, nv, timestamp=time.time())
+                self.providers[k].post(nv, timestamp=time.monotonic())
+                self.driver.setParam(k, nv, timestamp=time.monotonic())
                 self.driver.updatePV(k)
         
     def wait(self):

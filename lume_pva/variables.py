@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+import operator
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
+from functools import reduce
 
 import numpy as np
-from caproto import ChannelType
 from lume.variables import (
     BoolVariable,
     EnumVariable,
@@ -170,7 +171,7 @@ class VariableHandler(ABC, Generic[VariableT]):
     @abstractmethod
     def value_to_native(self, variable: VariableT, value: Any) -> Any:
         """
-        Performs fixups for the specified value so caproto can understand it. For most variable types, this function
+        Performs fixups for the specified value so pcaspy can understand it. For most variable types, this function
         won't need to do anything (default impl is fine). For variable types dealing with Numpy or Tensor types, this
         function will need to convert to the appropriate native Python type
 
@@ -204,15 +205,15 @@ class VariableHandler(ABC, Generic[VariableT]):
 
     def ca_pvspec(self, variable: VariableT) -> dict:
         """
-        Returns a dict of additional to be passed to caproto's PVSpec.
-        Use this to set max_elements, the record type, etc., if necessary.
+        Returns a dict of additional to be passed to pcaspy's PV database.
+        Use this to set count, type, etc., if necessary.
         Default implementation returns an empty dict.
-        
+
         Parameters
         ----------
         variable : Variable
             The variable to create the spec for
-            
+
         Returns
         -------
         dict :
@@ -235,6 +236,8 @@ class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
         if value_range is not None:
             v['control']['limitLow'] = value_range[0]
             v['control']['limitHigh'] = value_range[1]
+            v['display']['limitLow'] = value_range[0]
+            v['display']['limitHigh'] = value_range[1]
 
         unit = getattr(variable, 'unit')
         if unit is not None:
@@ -299,6 +302,22 @@ class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
 
     def native_to_value(self, variable: ScalarVariable | IntVariable, value: float | int) -> ScalarType:
         return value
+    
+    def ca_pvspec(self, variable: ScalarVariable | IntVariable) -> dict:
+        value_range = getattr(variable, "value_range", (0, 0))
+        value_range = (0, 0) if value_range is None else value_range
+        if isinstance(variable, IntVariable):
+            type_ = "int"
+        else:
+            type_ = "float"
+        return {
+            "unit": variable.unit,
+            "type": type_,
+            "lolim": value_range[0],
+            "hilim": value_range[1],
+            "lolo": value_range[0],
+            "hihi": value_range[1],
+        }
 
 class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
     """Variable handler for LUME NDVariable type"""
@@ -398,6 +417,18 @@ class NDVariableHandler(VariableHandler[NDVariable | TorchNDVariable]):
             return np.array(value, dtype=variable.dtype).reshape(variable.shape)
         else:
             raise NotImplementedError()
+        
+    def ca_pvspec(self, variable: NDVariable | TorchNDVariable) -> dict:
+        spec = {
+            "count": reduce(operator.mul, variable.shape),
+            "type": "int"
+        }
+        tc = self._typecode(variable)
+        if tc in ['floatValue', 'doubleValue']:
+            spec["type"] = "float"
+        elif tc in ['stringValue']:
+            raise TypeError(f"Invalid type code {variable.dtype}. Cannot support string arrays.")
+        return spec
 
 
 if TORCH_AVAILABLE:
@@ -478,8 +509,7 @@ class SimpleScalarHandler(VariableHandler[StrVariable | BoolVariable]):
     def ca_pvspec(self, variable: StrVariable | BoolVariable):
         if isinstance(variable, StrVariable):
             # Need to force record type and length for strings, otherwise default_value dictates the length.
-            # caproto also seems to have trouble handling strings (by default treating them as enums)
-            return {'record': 'waveform', 'max_length': 1024}
+            return {'type': 'char', 'count': 1024}
         else:
             return {}
 
@@ -516,18 +546,19 @@ class EnumVariableHandler(VariableHandler):
         return variable.options[0]
 
     def value_to_native(self, variable: EnumVariable, value: str | int):
+        if isinstance(value, str):
+            return variable.options.index(value)
         return value
 
-    def native_to_value(self, variable: EnumVariable, value):
+    def native_to_value(self, variable: EnumVariable, value: str | int):
+        if isinstance(value, int):
+            return variable.options[value]
         return value
     
     def ca_pvspec(self, variable: EnumVariable):
         return {
-            'record': 'mbbi',
-            'dtype': ChannelType.ENUM,
-            'cls_kwargs': {
-                'enum_strings': variable.options,
-            }
+            'type': 'enum',
+            'enums': variable.options,
         }
 
 
