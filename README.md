@@ -3,10 +3,12 @@
 Lume-PVA is a Python library that serves or consumes EPICS PVs based on a LUMEModel subclass and its supported variables.
 
 Features:
-* Model outputs served over PVA, supporting a subset of the EPICS NormativeTypes metadata
-* Inputs can be served as standalone PVs over PVA, or configured as clients for remote PVs
-* Automatic discovery of remote PV protocols
-* Snapshot mode for remote PVs
+* Model outputs served over PVAccess (PVA) and/or ChannelAccess (CA).
+    * PVA PVs support a subset of the EPICS NormativeTypes metadata.
+    * CA PVs support a subset of the standard EPICS CA meta, such as alarms, display limits and control limits.
+* Inputs can be served as standalone PVs over PVA, or configured as clients for remote PVs.
+* Automatic discovery of remote PV protocols.
+* Snapshot mode for remote PVs.
 
 ## Basic Usage
 
@@ -22,19 +24,18 @@ r.run()
 
 ### Model Outputs
 
-Model outputs are served over PVA, CA is not supported for these. If the output is solely an output, it will be configured as a read-only PV.
+Model outputs can be served served over PVA and/or CA. If the output is solely an output, it will be configured as a read-only PV.
 
 ### Model Inputs
 
 Model inputs can be configured as remote or local PVs. Local PVs are served by the Runner class and can be
-interacted with using pvput or other PVA tools on the command line.
+interacted with using pvput, caput or other CA/PVA tools on the command line.
 
-The only supported mode for local PVs is PVA, through p4p.
+Like model outputs, standalone inputs can be served over CA or PVA, depending on the `Runner` configuration.
 
-In the `remote` mode, the input is setup as a client. In this mode, both PVA and ChannelAccess (CA) are supported.
-
-In `remote` mode, it is not necessary to specify the protocol of the remote PV. The `pvua` library will automatically detect
-which protocol to use.
+In the `remote` mode, the input is setup as a client. In this mode, both PVA and CA are supported transparently.
+It's not necessary to specify the protocol of the remote PV; the `pvua` library will automatically detect
+which protocol to use. `pvua` prefers the more modern protocol (PVA), if available.
 
 ### Snapshot Mode
 
@@ -58,6 +59,7 @@ An example configuration:
     'remote_model_mode': 'continuous', # Set to 'snapshot' for snapshot mode
     'prefix': 'MY_PV_PREFIX:',
     'update_rate': 0.1, # Update period under which PVs will be batched together into one model.set(). Set to 0 to disable the window.
+    'protocol': ['ca', 'pva'] # Serve this as both CA and PVA (the default)
     'variables': {
         'input_a': {
             'name': 'input_a',
