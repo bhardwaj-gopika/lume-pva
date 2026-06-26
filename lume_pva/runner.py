@@ -367,6 +367,7 @@ class Runner:
         protos = self.config.get('protocol', ['ca', 'pva'])
 
         if 'pva' in protos:
+            LOG.debug(f'Creating PVA PV: pv={pv}')
             pvobj = SharedPV(
                 handler=Runner.Handler(
                     variable=var,
@@ -386,7 +387,7 @@ class Runner:
             if isinstance(default_value, list) and isinstance(default_value[0], str):
                 return
 
-            LOG.debug(f'Creaing CA PV: pv={pv}')
+            LOG.debug(f'Creating CA PV: pv={pv}')
             spec = handler.ca_pvspec(var)
 
             self.pvdb[f'{prefix}{pv}'] = spec
