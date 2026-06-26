@@ -236,6 +236,8 @@ class ScalarVariableHandler(VariableHandler[ScalarVariable | IntVariable]):
         if value_range is not None:
             v['control']['limitLow'] = value_range[0]
             v['control']['limitHigh'] = value_range[1]
+            v['display']['limitLow'] = value_range[0]
+            v['display']['limitHigh'] = value_range[1]
 
         unit = getattr(variable, 'unit')
         if unit is not None:
