@@ -38,7 +38,9 @@ torch = [
 ]
 dev = [
     "pre-commit",
-    "pytest"
+    "p4p",
+    "pyepics",
+    "pytest",
 ]
 docs = [
     "mkdocs",
