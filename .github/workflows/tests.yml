@@ -31,4 +31,4 @@ jobs:
       - name: Run tests
         working-directory: ${{ runner.temp }}
         run: |
-          uv run --project ${{ github.workspace }} --no-sync pytest --pyargs lume.tests
+          uv run --project ${{ github.workspace }} --no-sync pytest --pyargs lume_pva.tests

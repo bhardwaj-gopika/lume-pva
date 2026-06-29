@@ -23,7 +23,6 @@ from lume.variables import (
 from lume_torch.variables import TorchNDVariable, TorchScalarVariable
 from p4p import Type
 
-from caproto import ChannelType
 from lume_pva.epics import epicsAlarmSeverity, epicsAlarmStatus
 from lume_pva.variables import (
     EnumVariableHandler,
@@ -195,7 +194,7 @@ def test_valid_p4p_type(variable: Variable) -> None:
             {"limitLow": 0.0, "limitHigh": 10.0, "minStep": 0.0},
             {
                 "limitLow": 0.0,
-                "limitHigh": 0.0,
+                "limitHigh": 10.0,
                 "description": "",
                 "format": "",
                 "units": "mm",
@@ -514,20 +513,28 @@ def test_raise_packing_invalid_value(
     [
         pytest.param(
             StrVariable(name="s"),
-            {"record": "waveform", "max_length": 1024},
+            {"type": "char", "count": 1024},
             id="string_waveform",
         ),
         pytest.param(BoolVariable(name="b"), {}, id="bool_no_extras"),
-        pytest.param(ScalarVariable(name="x"), {}, id="scalar_no_extras"),
+        pytest.param(
+            ScalarVariable(name="x"),
+            {'unit': None, 'type': 'float', 'lolim': 0, 'hilim': 0, 'lolo': 0, 'hihi': 0},
+            id="scalar_no_extras"),
         pytest.param(TorchScalarVariable(name="x"), {}, id="tscalar_no_extras"),
-        pytest.param(TorchNDVariable(name="x", shape=(2, 3)), {}, id="tnd"),
-        pytest.param(NDVariable(name="x", shape=(2, 3)), {}, id="nd_no_extras"),
+        pytest.param(
+            TorchNDVariable(name="x", shape=(2, 3)),
+            {'count': 6, 'type': 'float'},
+            id="tnd"),
+        pytest.param(
+            NDVariable(name="x", shape=(2, 3)),
+            {'count': 6, 'type': 'float'},
+            id="nd_no_extras"),
         pytest.param(
             EnumVariable(name="e", options=["A", "B"]),
             {
-                "record": "mbbi",
-                "dtype": ChannelType.ENUM,
-                "cls_kwargs": {"enum_strings": ["A", "B"]},
+                "type": "enum",
+                "enums": ["A", "B"],
             },
             id="enum_mbbi",
         ),
