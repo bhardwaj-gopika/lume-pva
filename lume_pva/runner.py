@@ -199,6 +199,9 @@ class Runner:
         self.ca_server: pcaspy.SimpleServer | None = None
         self.ca_driver: Runner.CaDriver | None = None
 
+        # Cache for previous state, value per name
+        self._cached_state: dict[str, Any] = {}
+
         # Generate default config
         if config is None:
             config = self.generate_config(model, prefix)
@@ -575,6 +578,12 @@ class Runner:
             if latest_ts <= 0:
                 latest_ts = time.monotonic()
 
+            # Stash previous state
+            settable_var_names = [
+                key for key, var in self.model.supported_variables.items() if not var.read_only
+            ]
+            self._set_cached_state(self.model.get(settable_var_names))
+
             # Set and simulate
             sim_error = None
             try:
@@ -626,8 +635,8 @@ class Runner:
                 )
             except Exception as exc:
                 sim_error = str(exc)
-                LOG.error(f"Simulation Cycle Failed: ({sim_error})")
-                raise
+                LOG.error(f"Simulation Cycle Failed: ({sim_error}), resetting to cached value")
+                self._reset_to_cached_state()
             finally:
                 # With simulation compoleted, signal put completion to any waitihng clients
                 for cb in done_callbacks:
@@ -647,3 +656,13 @@ class Runner:
             return
         except Exception as e:
             raise e
+
+    def _reset_to_cached_state(self) -> None:
+        """Apply cached values to the model"""
+        LOG.info(f"Resetting model with new values: {self._cached_state}")
+        self.model.set(self._cached_state)
+
+    def _set_cached_state(self, state: dict[str, Any]) -> None:
+        """Save `state` to the cache"""
+        LOG.debug(f"Caching model state: {state}")
+        self._cached_state = state
