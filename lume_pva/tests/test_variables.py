@@ -88,9 +88,7 @@ def test_value_pack_unpack_roundtrip(
     assert isinstance(handler, VariableHandler)
     type_ = handler.create_type(variable)
 
-    unpacked = handler.unpack_value(
-        variable, handler.pack_value(variable, type_, value)
-    )
+    unpacked = handler.unpack_value(variable, handler.pack_value(variable, type_, value))
 
     assert unpacked == expected
     assert isinstance(unpacked, expected_type)
@@ -120,9 +118,7 @@ def test_numpy_array_roundtrip(
     assert handler is not None
     type_ = handler.create_type(variable)
 
-    unpacked = handler.unpack_value(
-        variable, handler.pack_value(variable, type_, value)
-    )
+    unpacked = handler.unpack_value(variable, handler.pack_value(variable, type_, value))
 
     assert unpacked.shape == expected.shape
     assert unpacked.shape == expected.shape
@@ -154,9 +150,7 @@ def test_torch_array_roundtrip(
     assert handler is not None
     type_ = handler.create_type(variable)
 
-    unpacked = handler.unpack_value(
-        variable, handler.pack_value(variable, type_, value)
-    )
+    unpacked = handler.unpack_value(variable, handler.pack_value(variable, type_, value))
 
     assert unpacked.shape == variable.shape
     assert unpacked.shape == expected.shape
@@ -187,9 +181,7 @@ def test_valid_p4p_type(variable: Variable) -> None:
     ("variable", "value", "ctrl_dict", "disp_dict", "alarm_dict"),
     [
         (
-            ScalarVariable(
-                name="x", value_range=(0.0, 10.0), unit="mm", default_value=5.0
-            ),
+            ScalarVariable(name="x", value_range=(0.0, 10.0), unit="mm", default_value=5.0),
             3.5,
             {"limitLow": 0.0, "limitHigh": 10.0, "minStep": 0.0},
             {
@@ -519,17 +511,27 @@ def test_raise_packing_invalid_value(
         pytest.param(BoolVariable(name="b"), {}, id="bool_no_extras"),
         pytest.param(
             ScalarVariable(name="x"),
-            {'unit': None, 'type': 'float', 'lolim': 0, 'hilim': 0, 'lolo': 0, 'hihi': 0},
-            id="scalar_no_extras"),
+            {
+                "unit": None,
+                "type": "float",
+                "lolim": 0,
+                "hilim": 0,
+                "lolo": 0,
+                "hihi": 0,
+            },
+            id="scalar_no_extras",
+        ),
         pytest.param(TorchScalarVariable(name="x"), {}, id="tscalar_no_extras"),
         pytest.param(
             TorchNDVariable(name="x", shape=(2, 3)),
-            {'count': 6, 'type': 'float'},
-            id="tnd"),
+            {"count": 6, "type": "float"},
+            id="tnd",
+        ),
         pytest.param(
             NDVariable(name="x", shape=(2, 3)),
-            {'count': 6, 'type': 'float'},
-            id="nd_no_extras"),
+            {"count": 6, "type": "float"},
+            id="nd_no_extras",
+        ),
         pytest.param(
             EnumVariable(name="e", options=["A", "B"]),
             {

@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-from lume.model import LUMEModel
-from lume.variables import ScalarVariable, IntVariable, BoolVariable, StrVariable, EnumVariable
 from typing import Any
+
+from lume.model import LUMEModel
+from lume.variables import (
+    BoolVariable,
+    EnumVariable,
+    IntVariable,
+    ScalarVariable,
+    StrVariable,
+)
+
 from lume_pva.runner import Runner
 from lume_pva.simulator import SimpleSimulator
+
 
 class SimpleMathModel(LUMEModel):
     """
     A simple mathematical model that demonstrates basic LUMEModel implementation.
-    
+
     This model computes:
     - sum_output = input_a + input_b
     """
-    
+
     def __init__(self):
         """Initialize the model with default state."""
         # Define initial values
@@ -28,7 +37,7 @@ class SimpleMathModel(LUMEModel):
         }
         # Current state (will be modified during simulation)
         self._state = self._initial_state.copy()
-        
+
         # Define supported variables
         self._variables = {
             "input_a": ScalarVariable(
@@ -36,28 +45,28 @@ class SimpleMathModel(LUMEModel):
                 default_value=1.0,
                 value_range=(-10.0, 10.0),
                 unit="dimensionless",
-                read_only=False
+                read_only=False,
             ),
             "input_b": ScalarVariable(
-                name="input_b", 
+                name="input_b",
                 default_value=1.0,
                 value_range=(-10.0, 10.0),
                 unit="dimensionless",
-                read_only=False
+                read_only=False,
             ),
             "input_c": ScalarVariable(
-                name="input_c", 
+                name="input_c",
                 default_value=1.0,
                 value_range=(-10.0, 10.0),
                 unit="dimensionless",
-                read_only=False
+                read_only=False,
             ),
             "input_d": IntVariable(
-                name="input_d", 
+                name="input_d",
                 default_value=1,
                 value_range=(-10, 10),
                 unit="dimensionless",
-                read_only=False
+                read_only=False,
             ),
             "invert": BoolVariable(
                 name="invert",
@@ -66,52 +75,50 @@ class SimpleMathModel(LUMEModel):
             ),
             "desc": StrVariable(
                 name="desc",
-                #default_value="Hello, world!",
-                read_only=True
+                # default_value="Hello, world!",
+                read_only=True,
             ),
             "sum_output": ScalarVariable(
                 name="sum_output",
                 default_value=2.0,
-                unit="dimensionless", 
-                read_only=True  # This is computed, not set directly
+                unit="dimensionless",
+                read_only=True,  # This is computed, not set directly
             ),
             "my_enum": EnumVariable(
-                name="my_enum",
-                default_value="test1",
-                options=['test1', 'test2', 'test3', 'hello']
-            )
+                name="my_enum", default_value="test1", options=["test1", "test2", "test3", "hello"]
+            ),
         }
-    
+
     @property
     def supported_variables(self) -> dict[str, ScalarVariable]:
         """Return the dictionary of supported variables."""
         return self._variables
-    
+
     def _get(self, names: list[str]) -> dict[str, Any]:
         """
         Internal method to retrieve current values for specified variables.
-        
+
         Parameters
         ----------
         names : list[str]
             List of variable names to retrieve
-            
+
         Returns
         -------
         dict[str, Any]
             Dictionary mapping variable names to their current values
         """
         return {name: self._state[name] for name in names}
-    
+
     def _set(self, values: dict[str, Any]) -> None:
         """
         Internal method to set input variables and compute outputs.
-        
+
         This method:
         1. Updates input variables in the state
         2. Performs calculations to update output variables
         3. Stores results in the state
-        
+
         Parameters
         ----------
         values : dict[str, Any]
@@ -120,75 +127,80 @@ class SimpleMathModel(LUMEModel):
         # Update input values in state
         for name, value in values.items():
             self._state[name] = value
-        
+
         # Perform calculations to update outputs
         input_a = self._state["input_a"]
         input_b = self._state["input_b"]
         input_c = self._state["input_c"]
         input_d = self._state["input_d"]
         invert = self._state["invert"]
-        
+
         # Calculate outputs
         self._state["sum_output"] = input_a + input_b + input_c + input_d
         if invert:
             self._state["sum_output"] = -self._state["sum_output"]
-    
+
     def reset(self) -> None:
         """Reset the model to its initial state."""
         self._state = self._initial_state.copy()
-        
-if __name__ == '__main__':
+
+
+if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('-v', action='store_true', help='Enable verbose logging')
-    parser.add_argument('--mode', type=str, choices=['local', 'remote', 'snapshot'], default='local', help='Mode to run the test in')
+    parser.add_argument("-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["local", "remote", "snapshot"],
+        default="local",
+        help="Mode to run the test in",
+    )
     args = parser.parse_args()
 
     # Configure logging for debug if requested
     import logging
+
     logging.basicConfig(level=logging.DEBUG if args.v else logging.INFO)
 
     # If running in auto mode, provision a dummy server that gives random values for PVs
-    if args.mode in ['snapshot', 'remote']:
-        sim = SimpleSimulator(pvs={
-            'input_a': {
-                'type': 'float',
-                'mode': 'random_uniform',
-                'range': [-100, 100],
-                'rate': 0.12
-            },
-            'input_b': {
-                'type': 'float',
-                'mode': 'expr',
-                'expr': '10*sin(0.5 * t)',
-                'rate': 0.05
-            },
-            'input_c': {
-                'type': 'float',
-                'mode': 'expr',
-                'expr': '10*sin(0.325 * t)',
-                'rate': 0.09
-            },
-            'input_d': {
-                'type': 'float',
-                'mode': 'expr',
-                'expr': '10*t',
-                'rate': 1
+    if args.mode in ["snapshot", "remote"]:
+        sim = SimpleSimulator(
+            pvs={
+                "input_a": {
+                    "type": "float",
+                    "mode": "random_uniform",
+                    "range": [-100, 100],
+                    "rate": 0.12,
+                },
+                "input_b": {
+                    "type": "float",
+                    "mode": "expr",
+                    "expr": "10*sin(0.5 * t)",
+                    "rate": 0.05,
+                },
+                "input_c": {
+                    "type": "float",
+                    "mode": "expr",
+                    "expr": "10*sin(0.325 * t)",
+                    "rate": 0.09,
+                },
+                "input_d": {"type": "float", "mode": "expr", "expr": "10*t", "rate": 1},
             }
-        })
-
+        )
 
     model = SimpleMathModel()
     config = Runner.generate_config(model)
 
-    config['description'] = 'Simple math model demonstrating a number of variable types'
+    config["description"] = "Simple math model demonstrating a number of variable types"
 
-    config['update_rate'] = 1 # Update once per second
-    config['remote_model_mode'] = 'continuous' if args.mode == 'remote' else 'snapshot'
+    config["update_rate"] = 1  # Update once per second
+    config["remote_model_mode"] = "continuous" if args.mode == "remote" else "snapshot"
 
-    if args.mode in ['remote', 'snapshot']:
-        for k in ['input_a', 'input_b', 'input_c']:
-            config['variables'][k]['mode'] = 'remote'
+    if args.mode in ["remote", "snapshot"]:
+        for k in ["input_a", "input_b", "input_c"]:
+            config["variables"][k]["mode"] = "remote"
 
     runner = Runner(model=model, config=config)
     runner.run()

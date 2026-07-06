@@ -1,25 +1,26 @@
-from lume.model import LUMEModel, Variable
-from lume.variables import Variable, ParticleGroupVariable
-from p4p.server import ServerOperation
-from p4p.server.thread import SharedPV
-from p4p.client.thread import Subscription, Disconnected, RemoteError, Cancelled
-from p4p.nt import NTScalar
-from p4p import Value, Type
-from typing import Any, Dict, TypedDict
+import logging
+import math
+import os
+import threading
+import time
 from collections.abc import Callable
 from queue import Empty, Queue
-from enum import IntEnum
-from lume_pva.variables import VariableHandler, find_variable_handler
-import time
-import math
-import p4p.server
+from typing import Any, TypedDict
+
 import p4p.client.thread
-import logging
-import pvua
-import threading
+import p4p.server
 import pcaspy
 import pcaspy.cas
-import os
+import pvua
+from lume.model import LUMEModel, Variable
+from lume.variables import ParticleGroupVariable
+from p4p import Type, Value
+from p4p.client.thread import Subscription
+from p4p.nt import NTScalar
+from p4p.server import ServerOperation
+from p4p.server.thread import SharedPV
+
+from lume_pva.variables import VariableHandler, find_variable_handler
 
 LOG = logging.getLogger("LumePva")
 logging.getLogger("pcaspy").setLevel(logging.WARNING)
@@ -72,20 +73,20 @@ class RunnerConfig(TypedDict):
 
     remote_model_mode: str
     prefix: str
-    variables: Dict[str, RunnerVariable]
+    variables: dict[str, RunnerVariable]
     protocol: list[str]
 
 
 class Runner:
     """Simple runner for LUMEModel derived models"""
 
-    pvs: Dict[str, SharedPV]
-    ca_pvs: Dict[str, str]
-    pv_handlers: Dict[str, VariableHandler]
+    pvs: dict[str, SharedPV]
+    ca_pvs: dict[str, str]
+    pv_handlers: dict[str, VariableHandler]
     # List of all output PVs that need to be updated after simulation
     outputs: list[str]
-    values: Dict[str, Value]
-    subs: Dict[str, Subscription]
+    values: dict[str, Value]
+    subs: dict[str, Subscription]
 
     class Handler:
         """
@@ -108,7 +109,7 @@ class Runner:
                 # Update PVs in simulator
                 self.runner._enqueue(
                     {self.variable.name: {"value": op.value(), "ts": time.monotonic()}},
-                    done=lambda error: op.done(error=error)
+                    done=lambda error: op.done(error=error),
                 )
                 pv.post(op.value())
                 LOG.debug(f"Setting PVA: {self.variable.name} -> {op.value()}")
@@ -118,6 +119,7 @@ class Runner:
 
     class CaDriver(pcaspy.Driver):
         """ChannelAccess driver handling operations on behalf of the Runner class"""
+
         def __init__(self, runner: "Runner"):
             super().__init__()
             self.runner = runner
@@ -130,7 +132,7 @@ class Runner:
 
             var: Variable = self.runner.model.supported_variables.get(vn, None)
             if var is None:
-                raise NameError(f'No variable named {vn} associated with pv {reason}')
+                raise NameError(f"No variable named {vn} associated with pv {reason}")
 
             # Reject writes to read-only PVs
             if var.read_only:
@@ -154,7 +156,7 @@ class Runner:
 
             self.runner._enqueue(
                 {vn: {"value": nv, "ts": time.monotonic()}},
-                done=lambda error: _complete_put()
+                done=lambda error: _complete_put(),
             )
             return True
 
@@ -190,13 +192,12 @@ class Runner:
         self.providers = {}  # Just for renaming
         self.pvdb = {}  # For pcaspy
         self.snapshot_pvs = []
-        self.pv_to_var: Dict[str, str] = {}  # Map pv name -> variable name
+        self.pv_to_var: dict[str, str] = {}  # Map pv name -> variable name
         self.var_to_pv = {}
         self.ca_pvs = {}
         self.pvua_context = pvua.Context()
         self.ca_server: pcaspy.SimpleServer | None = None
         self.ca_driver: Runner.CaDriver | None = None
-
 
         # Generate default config
         if config is None:
@@ -353,7 +354,9 @@ class Runner:
             }
         return config
 
-    def _enqueue(self, values: Dict[str, Any], done: Callable[[str | None], None] | None = None) -> None:
+    def _enqueue(
+        self, values: dict[str, Any], done: Callable[[str | None], None] | None = None
+    ) -> None:
         """
         Enqueue a batch of PV updates to be applied to the model.
 
@@ -368,7 +371,6 @@ class Runner:
             put-completion to clients until results are actually available.
         """
         self.queue.put({"values": values, "done": [done] if done is not None else []})
-
 
     def _add_pv(
         self, pv: str, var: Variable, ro: bool, prefix: str, handler: VariableHandler
@@ -389,34 +391,30 @@ class Runner:
         handler : VariableHandler
             The variable handler for this variable type
         """
-        protos = self.config.get('protocol', ['ca', 'pva'])
+        protos = self.config.get("protocol", ["ca", "pva"])
 
-        if 'pva' in protos:
-            LOG.debug(f'Creating PVA PV: pv={pv}')
+        if "pva" in protos:
+            LOG.debug(f"Creating PVA PV: pv={pv}")
             pvobj = SharedPV(
-                handler=Runner.Handler(
-                    variable=var,
-                    runner=self,
-                    read_only=ro
-                ),
-                initial=self._generate_value(var.name, None)
+                handler=Runner.Handler(variable=var, runner=self, read_only=ro),
+                initial=self._generate_value(var.name, None),
             )
             self.pvs[var.name] = pvobj
-            self.providers[f'{prefix}{pv}'] = pvobj
+            self.providers[f"{prefix}{pv}"] = pvobj
 
-        if 'ca' in protos:
+        if "ca" in protos:
             # Generate a default value suitable for pcaspy
             default_value = handler.default_value(var, flatten=True, native_python=True)
-            
+
             # String arrays are not really supported in channel access. Skip it.
             if isinstance(default_value, list) and isinstance(default_value[0], str):
                 return
 
-            LOG.debug(f'Creating CA PV: pv={pv}')
+            LOG.debug(f"Creating CA PV: pv={pv}")
             spec = handler.ca_pvspec(var)
 
-            self.pvdb[f'{prefix}{pv}'] = spec
-            self.pvdb[f'{prefix}{pv}'].update({"asyn": True})
+            self.pvdb[f"{prefix}{pv}"] = spec
+            self.pvdb[f"{prefix}{pv}"].update({"asyn": True})
             # enable async for put-completion
             self.ca_pvs[var.name] = pv
 
@@ -477,9 +475,7 @@ class Runner:
         """Create any required control PVs"""
         pvname = f"{self.config['prefix']}SNAPSHOT"
         if pvname in self.providers:
-            raise RuntimeError(
-                f"Fatal name conflict: {pvname} for the snapshot PV already exists!"
-            )
+            raise RuntimeError(f"Fatal name conflict: {pvname} for the snapshot PV already exists!")
 
         self.providers[pvname] = SharedPV(initial=NTScalar("d").wrap(0))
 
@@ -507,9 +503,7 @@ class Runner:
         """Callback from p4p monitor updates"""
         self._enqueue({self.pv_to_var[pvname]: {"value": value, "ts": time.monotonic()}})
 
-    def _generate_value(
-        self, pv: str, value: Any | None, ts: float | None = None
-    ) -> Value:
+    def _generate_value(self, pv: str, value: Any | None, ts: float | None = None) -> Value:
         """
         Generates a new value for posting to the PV.
         Handles alarm updates, timestamp updates, and generating the value in the first place. This handles the
@@ -587,16 +581,12 @@ class Runner:
                 set_start = time.perf_counter()
                 LOG.debug(f"Setting model with new values: {new_values}")
                 self.model.set(new_values)
-                LOG.debug(
-                    f"Model set() took {(time.perf_counter() - set_start) * 1000.0:.3f} ms"
-                )
+                LOG.debug(f"Model set() took {(time.perf_counter() - set_start) * 1000.0:.3f} ms")
 
                 # Get new simulated values
                 get_start = time.perf_counter()
                 out_values = self.model.get(self.model.supported_variables)
-                LOG.debug(
-                    f"Model get() took {(time.perf_counter() - get_start) * 1000.0:.3f} ms"
-                )
+                LOG.debug(f"Model get() took {(time.perf_counter() - get_start) * 1000.0:.3f} ms")
 
                 # Update output PVs with new values
                 pv_update_start = time.perf_counter()
@@ -622,7 +612,11 @@ class Runner:
                             self.model.supported_variables[k], v
                         )
 
-                        self.ca_driver.setParam(capv, nv, pcaspy.cas.epicsTimeStamp.fromPosixTimeStamp(latest_ts))
+                        self.ca_driver.setParam(
+                            capv,
+                            nv,
+                            pcaspy.cas.epicsTimeStamp.fromPosixTimeStamp(latest_ts),
+                        )
 
                 if self.ca_driver is not None:
                     self.ca_driver.updatePVs()
@@ -641,7 +635,6 @@ class Runner:
                         cb(sim_error)
                     except Exception as excp:
                         LOG.error(f"Error signalling put-completion: {excp}")
-
 
     def run(self):
         """

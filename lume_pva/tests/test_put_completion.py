@@ -22,12 +22,12 @@ Runners are started up in independent subprocesses to ensure each test gets a
 fresh Runner.
 """
 
-from dataclasses import dataclass
 import multiprocessing
-from multiprocessing.synchronize import Event as mpEvent
 import os
 import threading
-from typing import Callable, Generator
+from collections.abc import Callable, Generator
+from dataclasses import dataclass
+from multiprocessing.synchronize import Event as mpEvent
 
 import pytest
 
@@ -38,12 +38,12 @@ os.environ.setdefault("EPICS_CA_AUTO_ADDR_LIST", "NO")
 os.environ.setdefault("EPICS_PVA_ADDR_LIST", "127.0.0.1")
 os.environ.setdefault("EPICS_PVA_AUTO_ADDR_LIST", "NO")
 
-import epics  # noqa: E402  (import after env is configured)
-from lume.model import LUMEModel  # noqa: E402
-from lume.variables import ScalarVariable  # noqa: E402
-from p4p.client.thread import Context  # noqa: E402
+import epics
+from lume.model import LUMEModel
+from lume.variables import ScalarVariable
+from p4p.client.thread import Context
 
-from lume_pva.runner import Runner  # noqa: E402
+from lume_pva.runner import Runner
 
 # Generous upper bound for any single operation to complete.
 OP_TIMEOUT = 10.0
@@ -202,7 +202,7 @@ def _assert_put_completion(harness: RunnerHandle, putter: Callable[[], None]) ->
     def _do_put() -> None:
         try:
             putter()
-        except BaseException as exc:  # noqa: BLE001 - surfaced to the test
+        except BaseException as exc:
             errors.append(exc)
         finally:
             put_returned.set()
@@ -215,9 +215,9 @@ def _assert_put_completion(harness: RunnerHandle, putter: Callable[[], None]) ->
 
     # ...so a completion-aware put must still be blocked. If this fires, the
     # client was signalled before the simulation finished (put-completion bug).
-    assert not put_returned.wait(timeout=BLOCK_WINDOW), (
-        "put reported completion before the simulation finished"
-    )
+    assert not put_returned.wait(
+        timeout=BLOCK_WINDOW
+    ), "put reported completion before the simulation finished"
     assert thread.is_alive()
 
     # Let the simulation finish; the put must now complete.
@@ -242,7 +242,7 @@ def test_ca_put_waits_for_simulation(harness: RunnerHandle) -> None:
     # caput timeout needs to essentially run forever, to `_assert_put_completion` to check
     # if the thread has completed.
     _assert_put_completion(
-        harness, lambda: epics.caput("input_a", 7.0, wait=True, timeout=10*OP_TIMEOUT)
+        harness, lambda: epics.caput("input_a", 7.0, wait=True, timeout=10 * OP_TIMEOUT)
     )
 
     assert harness.completed.is_set()

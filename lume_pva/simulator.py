@@ -1,55 +1,56 @@
-import p4p
-import threading
+import copy
 import math
 import random
+import threading
 import time
+from typing import Any, ClassVar
+
+import numpy as np
 import pcaspy
-import copy
-from p4p.nt import NTScalar, NTNDArray
+from p4p.nt import NTNDArray, NTScalar
 from p4p.server import Server
 from p4p.server.thread import SharedPV
-from typing import Dict, Any
-import numpy as np
 
-class SimpleSimulator():
+
+class SimpleSimulator:
     """Simple PV simulator for float PVs"""
 
     pvs: dict
     sleep_time: int
-    providers: Dict[str, SharedPV]
+    providers: dict[str, SharedPV]
 
     MIN_RATE = 0.01
 
-    pva_mode_lookup = {
-        'float': 'd',
-        'int': 'i',
+    pva_mode_lookup: ClassVar[dict[str, str]] = {
+        "float": "d",
+        "int": "i",
     }
 
-    ca_mode_lookup = {
-        'float': 'float',
-        'int': 'int'
+    ca_mode_lookup: ClassVar[dict[str, str]] = {
+        "float": "float",
+        "int": "int",
     }
-    
+
     def _mode_to_pva_type(self, mode: str) -> str:
         if mode not in SimpleSimulator.pva_mode_lookup.keys():
-            raise ValueError(f'Unknown type {mode} found in config')
+            raise ValueError(f"Unknown type {mode} found in config")
         return SimpleSimulator.pva_mode_lookup[mode]
 
     def _mode_to_ca_type(self, mode: str) -> str:
         if mode not in SimpleSimulator.ca_mode_lookup.keys():
-            raise ValueError(f'Unknown type {mode} found in config')
+            raise ValueError(f"Unknown type {mode} found in config")
         return SimpleSimulator.ca_mode_lookup[mode]
 
     def _nt_wrapper(self, type: str) -> Any:
-        if type in ['float', 'int']:
+        if type in ["float", "int"]:
             return NTScalar(self._mode_to_pva_type(type))
-        elif type in ['array1d']:
-            return NTNDArray() 
+        elif type in ["array1d"]:
+            return NTNDArray()
 
     def __init__(self, pvs: dict):
         """
         Initialize the simple PV simulator
-        
+
         Parameters
         ----------
         pvs : dict
@@ -59,10 +60,10 @@ class SimpleSimulator():
                     "type": "random_uniform",
                     "init": 0.5,
                     "range": [-0.5, 1.0],
-                    "rate": 
+                    "rate":
                 }
             }
-        
+
         """
         self.server = pcaspy.SimpleServer()
         self.pvs = copy.deepcopy(pvs)
@@ -70,38 +71,41 @@ class SimpleSimulator():
         self.sleep_time = 0.001
 
         # Build list of globals for eval() calls
-        self.math_globals = {'t': 0}
+        self.math_globals = {"t": 0}
         for k, v in math.__dict__.items():
-            if k.startswith('__'):
+            if k.startswith("__"):
                 continue
             self.math_globals[k] = v
 
         # Create PVs
         self.providers = {}
         for k, v in self.pvs.items():
-            typ = v.get('type', 'float')
-            self.providers[k] = SharedPV(
-                nt=self._nt_wrapper(typ),
-                initial=self._initial(v)
-            )
-            if typ in ['float', 'int']:
-                self.server.createPV('', {
-                    k: {
-                        'type': self._mode_to_ca_type(typ),
-                        'default': v.get('init', 0),
-                        'prec': 3,
-                        'scan': 1
-                    }
-                })
-            elif typ in ['array1d']:
-                self.server.createPV('', {
-                    k: {
-                        'count': v.get('nvalues', 512),
-                        'prec': 3,
-                        'scan': 1,
-                        'default': self._initial(v)
-                    }
-                })
+            typ = v.get("type", "float")
+            self.providers[k] = SharedPV(nt=self._nt_wrapper(typ), initial=self._initial(v))
+            if typ in ["float", "int"]:
+                self.server.createPV(
+                    "",
+                    {
+                        k: {
+                            "type": self._mode_to_ca_type(typ),
+                            "default": v.get("init", 0),
+                            "prec": 3,
+                            "scan": 1,
+                        }
+                    },
+                )
+            elif typ in ["array1d"]:
+                self.server.createPV(
+                    "",
+                    {
+                        k: {
+                            "count": v.get("nvalues", 512),
+                            "prec": 3,
+                            "scan": 1,
+                            "default": self._initial(v),
+                        }
+                    },
+                )
 
         # Create PVA server
         self.pva_srv = Server(providers=[self.providers])
@@ -117,67 +121,61 @@ class SimpleSimulator():
             self.server.process(self.sleep_time)
 
     def _initial(self, v: dict):
-        if v.get('type', 'float') in ['float', 'int']:
-            return v.get('init', 0)
+        if v.get("type", "float") in ["float", "int"]:
+            return v.get("init", 0)
         else:
-            return v.get('init', np.zeros(shape=(v.get('nvalues', 512)), dtype=np.float64))
+            return v.get("init", np.zeros(shape=(v.get("nvalues", 512)), dtype=np.float64))
 
     def _generate_array(self, st: float, dt: float, values: int, expr: str) -> np.ndarray:
         """Generate an array with an eval string"""
         step = dt / values
         a = np.ndarray(shape=(values), dtype=np.float64)
         for i in range(values):
-            self.math_globals['t'] = st + step * i
+            self.math_globals["t"] = st + step * i
             a[i] = eval(expr, self.math_globals)
         return a
 
     def _update_pvs(self):
         """Update the simulated PVs"""
-        self.math_globals['t'] = time.monotonic()
+        self.math_globals["t"] = time.monotonic()
         for k, v in self.pvs.items():
             nv = None
-            typ = v.get('mode', 'random_uniform')
-            lastup = v.get('last_updated', 0)
+            typ = v.get("mode", "random_uniform")
+            lastup = v.get("last_updated", 0)
 
-            if time.monotonic() - lastup < v.get('rate', 0.1):
+            if time.monotonic() - lastup < v.get("rate", 0.1):
                 continue
 
-            v['last_updated'] = time.monotonic()
+            v["last_updated"] = time.monotonic()
 
             # Uniform range update
-            if typ == 'random_uniform':
-                if 'range' in v and v['range'] != 0:
-                    nv = random.uniform(
-                        v['range'][0],
-                        v['range'][1]
-                    )
+            if typ == "random_uniform":
+                if "range" in v and v["range"] != 0:
+                    nv = random.uniform(v["range"][0], v["range"][1])
 
             # Math expressions
-            if typ == 'expr' or typ == 'expression':
-                assert 'expr' in v
-                if v['type'] == 'array1d':
+            if typ == "expr" or typ == "expression":
+                assert "expr" in v
+                if v["type"] == "array1d":
                     nv = self._generate_array(
                         time.monotonic(),
-                        v.get('rate', 0.1),
-                        v.get('nvalues', 512),
-                        v['expr']
+                        v.get("rate", 0.1),
+                        v.get("nvalues", 512),
+                        v["expr"],
                     )
                 else:
-                    nv = eval(
-                        v['expr'],
-                        self.math_globals
-                    )
+                    nv = eval(v["expr"], self.math_globals)
 
             # Constants
-            elif typ == 'const':
-                pass # Nothing to do for constants
+            elif typ == "const":
+                pass  # Nothing to do for constants
 
             # Update the value if we have a new one
             if nv is not None:
                 self.providers[k].post(nv, timestamp=time.monotonic())
                 self.driver.setParam(k, nv, timestamp=time.monotonic())
                 self.driver.updatePV(k)
-        
+
     def wait(self):
         """Waits for the thread to exit (forever, usually)"""
         self.thread.join()

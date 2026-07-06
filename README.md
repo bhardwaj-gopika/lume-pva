@@ -93,7 +93,7 @@ Supported metadata:
     * `ScalarVariable.value_range[1]`
 * `alarm.severity` and `alarm.status`
     * Set based on the value in relation to `value_range`. Out of range values trigger alarms.
-    
+
 ### `NDVariable`
 
 Represented as **NTNDArray** with data representation matching the numpy shape and dtype.

@@ -26,9 +26,7 @@ def model() -> StubModel:
         {
             "input_a": ScalarVariable(name="input_a"),
             "output_b": ScalarVariable(name="output_b", read_only=True),
-            "image": NDVariable(
-                name="image", shape=(4, 4), dtype=np.float64, read_only=True
-            ),
+            "image": NDVariable(name="image", shape=(4, 4), dtype=np.float64, read_only=True),
         }
     )
 
