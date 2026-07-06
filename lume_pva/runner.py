@@ -142,7 +142,7 @@ class Runner:
 
             # Transform int -> str for enums. Must be done before we submit it to the variable queue
             desc = self.runner.pvdb[reason]
-            if desc["type"] == "enum":
+            if desc.get("type") == "enum":
                 # Check range
                 if value < 0 or value >= len(desc["enums"]):
                     LOG.info(f"{reason}: Rejected invalid enum value {value} for")
