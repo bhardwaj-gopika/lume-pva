@@ -735,7 +735,7 @@ class Runner:
 
     def _reset_to_cached_state(self) -> None:
         """Apply cached values to the model"""
-        LOG.info(f"Resetting model with new values: {self._cached_state}")
+        LOG.debug(f"Resetting model with new values: {self._cached_state}")
         self.model.set(self._cached_state)
 
     def _set_cached_state(self, state: dict[str, Any]) -> None:
