@@ -313,3 +313,21 @@ def test_failed_sim(harness: RunnerHandle):
     assert harness.completed.is_set()
     assert float(epics.caget("input_a", timeout=OP_TIMEOUT)) == pytest.approx(4.2)
     assert float(epics.caget("sum_output", timeout=OP_TIMEOUT)) == pytest.approx(8.4)
+
+
+def test_pva_reset_calls_model_reset(harness: RunnerHandle) -> None:
+    # Keep the model gate open so regular put/get traffic can flow freely.
+    harness.release.set()
+
+    with Context("pva") as ctx:
+        ctx.put("input_a", 5.0, timeout=OP_TIMEOUT, wait=True)
+        assert float(ctx.get("input_a", timeout=OP_TIMEOUT)) == pytest.approx(5.0)
+        assert float(ctx.get("sum_output", timeout=OP_TIMEOUT)) == pytest.approx(10.0)
+
+        # Any write to RESET must invoke model.reset() and publish the reset state.
+        harness.completed.clear()
+        ctx.put("RESET", 0, timeout=OP_TIMEOUT, wait=True)
+        assert harness.completed.wait(timeout=OP_TIMEOUT)
+
+        assert float(ctx.get("input_a", timeout=OP_TIMEOUT)) == pytest.approx(0.0)
+        assert float(ctx.get("sum_output", timeout=OP_TIMEOUT)) == pytest.approx(0.0)

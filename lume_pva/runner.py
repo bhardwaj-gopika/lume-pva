@@ -125,6 +125,18 @@ class Runner:
             self.runner = runner
 
         def write(self, reason, value) -> bool:
+            if reason == self.runner.snapshot_control_pv:
+                self.runner.take_snapshot()
+                self.setParam(reason, value)
+                self.callbackPV(reason)
+                return True
+
+            if reason == self.runner.reset_control_pv:
+                self.runner._enqueue({}, reset=True)
+                self.setParam(reason, value)
+                self.callbackPV(reason)
+                return True
+
             # Lookup variable based on name
             vn = self.runner.pv_to_var.get(reason, None)
             if vn is None:
@@ -195,6 +207,8 @@ class Runner:
         self.pv_to_var: dict[str, str] = {}  # Map pv name -> variable name
         self.var_to_pv = {}
         self.ca_pvs = {}
+        self.snapshot_control_pv = ""
+        self.reset_control_pv = ""
         self.pvua_context = pvua.Context()
         self.ca_server: pcaspy.SimpleServer | None = None
         self.ca_driver: Runner.CaDriver | None = None
@@ -358,7 +372,10 @@ class Runner:
         return config
 
     def _enqueue(
-        self, values: dict[str, Any], done: Callable[[str | None], None] | None = None
+        self,
+        values: dict[str, Any],
+        done: Callable[[str | None], None] | None = None,
+        reset: bool = False,
     ) -> None:
         """
         Enqueue a batch of PV updates to be applied to the model.
@@ -372,8 +389,16 @@ class Runner:
             consumes these values has finished (or failed). Receives an error
             string on failure, or None on success. Used to defer signalling
             put-completion to clients until results are actually available.
+        reset : bool
+            When true, request model.reset() before applying this batch.
         """
-        self.queue.put({"values": values, "done": [done] if done is not None else []})
+        self.queue.put(
+            {
+                "values": values,
+                "done": [done] if done is not None else [],
+                "reset": reset,
+            }
+        )
 
     def _add_pv(
         self, pv: str, var: Variable, ro: bool, prefix: str, handler: VariableHandler
@@ -476,16 +501,57 @@ class Runner:
 
     def _create_control_pvs(self):
         """Create any required control PVs"""
-        pvname = f"{self.config['prefix']}SNAPSHOT"
-        if pvname in self.providers:
-            raise RuntimeError(f"Fatal name conflict: {pvname} for the snapshot PV already exists!")
+        snapshot_pvname = f"{self.config['prefix']}SNAPSHOT"
+        self.snapshot_control_pv = snapshot_pvname
+        if snapshot_pvname in self.providers:
+            raise RuntimeError(
+                f"Fatal name conflict: {snapshot_pvname} for the snapshot PV already exists!"
+            )
 
-        self.providers[pvname] = SharedPV(initial=NTScalar("d").wrap(0))
+        self.providers[snapshot_pvname] = SharedPV(initial=NTScalar("d").wrap(0))
 
-        @self.providers[pvname].put
+        @self.providers[snapshot_pvname].put
         def onPut(pv, op):
             self.take_snapshot()
             op.done()
+
+        reset_pvname = f"{self.config['prefix']}RESET"
+        self.reset_control_pv = reset_pvname
+        if reset_pvname in self.providers:
+            raise RuntimeError(
+                f"Fatal name conflict: {reset_pvname} for the reset PV already exists!"
+            )
+
+        self.providers[reset_pvname] = SharedPV(initial=NTScalar("i").wrap(0))
+
+        @self.providers[reset_pvname].put
+        def onResetPut(pv, op):
+            self._enqueue(
+                {},
+                reset=True,
+            )
+            op.done()
+
+        if "ca" in self.config.get("protocol", ["ca", "pva"]):
+            if snapshot_pvname in self.pvdb:
+                raise RuntimeError(
+                    f"Fatal name conflict: {snapshot_pvname} for the CA snapshot PV already exists!"
+                )
+            if reset_pvname in self.pvdb:
+                raise RuntimeError(
+                    f"Fatal name conflict: {reset_pvname} for the CA reset PV already exists!"
+                )
+
+            self.pvdb[snapshot_pvname] = {
+                "type": "int",
+                "value": 0,
+                "asyn": False,
+            }
+            self.pvdb[reset_pvname] = {
+                "type": "int",
+                "value": 0,
+                "asyn": False,
+            }
 
         return None
 
@@ -545,6 +611,7 @@ class Runner:
 
             value_data: dict = item["values"]
             done_callbacks: list = item["done"]
+            reset_requested: bool = item.get("reset", False)
 
             # Wait for a time window of 'update_rate' seconds to pass before continuing
             until = time.monotonic() + self.update_rate
@@ -553,6 +620,7 @@ class Runner:
                     next_update = self.queue.get_nowait()
                     value_data.update(next_update["values"])
                     done_callbacks.extend(next_update["done"])
+                    reset_requested = reset_requested or next_update.get("reset", False)
                 except Empty:
                     pass
 
@@ -587,6 +655,14 @@ class Runner:
             # Set and simulate
             sim_error = None
             try:
+                if reset_requested:
+                    reset_start = time.perf_counter()
+                    LOG.info("Reset requested through RESET control PV")
+                    self.model.reset()
+                    LOG.debug(
+                        f"Model reset() took {(time.perf_counter() - reset_start) * 1000.0:.3f} ms"
+                    )
+
                 set_start = time.perf_counter()
                 LOG.debug(f"Setting model with new values: {new_values}")
                 self.model.set(new_values)

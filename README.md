@@ -42,6 +42,14 @@ which protocol to use. `pvua` prefers the more modern protocol (PVA), if availab
 When configured in snapshot mode, the `Runner` will only fetch values from remote PVs when a snapshot is triggered by a write to
 `{prefix}SNAPSHOT`.
 
+### Control PVs
+
+The runner always exposes a small set of control PVs:
+* `{prefix}SNAPSHOT`: triggers a snapshot pull for remote inputs in snapshot mode.
+* `{prefix}RESET`: any write requests `model.reset()` and publishes the reset state to output PVs.
+
+Control PVs are served over PVA, and are also available over CA when `protocol` includes `"ca"`.
+
 `prefix` is passed to the constructor of the `Runner` class and defines a prefix to prepend to the start of PV names.
 
 ### Configuration
