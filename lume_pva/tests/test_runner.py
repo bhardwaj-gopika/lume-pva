@@ -79,3 +79,44 @@ def test_no_variables() -> None:
     config = Runner.generate_config(empty_model)
 
     assert config["variables"] == {}
+
+
+def _make_runner_control_stub(protocol: list[str]) -> Runner:
+    runner = Runner.__new__(Runner)
+    runner._config = {
+        "prefix": "",
+        "protocol": protocol,
+    }
+    runner.providers = {}
+    runner.pvdb = {}
+    runner.snapshot_control_pv = ""
+    runner.reset_control_pv = ""
+
+    # _create_control_pvs wires callbacks to these methods; simple stubs are enough.
+    runner.take_snapshot = lambda: None
+    runner._enqueue = lambda *args, **kwargs: None
+    return runner
+
+
+def test_control_pvs_do_not_create_pva_sharedpvs_for_ca_only() -> None:
+    runner = _make_runner_control_stub(["ca"])
+
+    runner._create_control_pvs()
+
+    assert runner.snapshot_control_pv == "SNAPSHOT"
+    assert runner.reset_control_pv == "RESET"
+    assert "SNAPSHOT" not in runner.providers
+    assert "RESET" not in runner.providers
+    assert runner.pvdb["SNAPSHOT"]["type"] == "int"
+    assert runner.pvdb["RESET"]["type"] == "int"
+
+
+def test_control_pvs_create_pva_sharedpvs_when_pva_enabled() -> None:
+    runner = _make_runner_control_stub(["pva"])
+
+    runner._create_control_pvs()
+
+    assert "SNAPSHOT" in runner.providers
+    assert "RESET" in runner.providers
+    assert "SNAPSHOT" not in runner.pvdb
+    assert "RESET" not in runner.pvdb

@@ -501,38 +501,46 @@ class Runner:
 
     def _create_control_pvs(self):
         """Create any required control PVs"""
+        protos = self.config.get("protocol", ["ca", "pva"])
+
+        # Create a snapshot PV and a reset PV. These are used to trigger a snapshot of remote PVs, and to reset the model.
         snapshot_pvname = f"{self.config['prefix']}SNAPSHOT"
         self.snapshot_control_pv = snapshot_pvname
-        if snapshot_pvname in self.providers:
-            raise RuntimeError(
-                f"Fatal name conflict: {snapshot_pvname} for the snapshot PV already exists!"
-            )
-
-        self.providers[snapshot_pvname] = SharedPV(initial=NTScalar("d").wrap(0))
-
-        @self.providers[snapshot_pvname].put
-        def onPut(pv, op):
-            self.take_snapshot()
-            op.done()
 
         reset_pvname = f"{self.config['prefix']}RESET"
         self.reset_control_pv = reset_pvname
-        if reset_pvname in self.providers:
-            raise RuntimeError(
-                f"Fatal name conflict: {reset_pvname} for the reset PV already exists!"
-            )
 
-        self.providers[reset_pvname] = SharedPV(initial=NTScalar("i").wrap(0))
+        # Create PVA shared PVs for snapshot and reset if PVA is enabled
+        if "pva" in protos:
+            if snapshot_pvname in self.providers:
+                raise RuntimeError(
+                    f"Fatal name conflict: {snapshot_pvname} for the snapshot PV already exists!"
+                )
 
-        @self.providers[reset_pvname].put
-        def onResetPut(pv, op):
-            self._enqueue(
-                {},
-                reset=True,
-            )
-            op.done()
+            self.providers[snapshot_pvname] = SharedPV(initial=NTScalar("d").wrap(0))
 
-        if "ca" in self.config.get("protocol", ["ca", "pva"]):
+            @self.providers[snapshot_pvname].put
+            def onPut(pv, op):
+                self.take_snapshot()
+                op.done()
+
+            if reset_pvname in self.providers:
+                raise RuntimeError(
+                    f"Fatal name conflict: {reset_pvname} for the reset PV already exists!"
+                )
+
+            self.providers[reset_pvname] = SharedPV(initial=NTScalar("i").wrap(0))
+
+            @self.providers[reset_pvname].put
+            def onResetPut(pv, op):
+                self._enqueue(
+                    {},
+                    reset=True,
+                )
+                op.done()
+
+        # Create CA PVs for snapshot and reset if CA is enabled
+        if "ca" in protos:
             if snapshot_pvname in self.pvdb:
                 raise RuntimeError(
                     f"Fatal name conflict: {snapshot_pvname} for the CA snapshot PV already exists!"
