@@ -345,7 +345,9 @@ def test_default_array_value_passthrough(
             "B",
             id="enum",
         ),
-        pytest.param(TorchScalarVariable(name="torchscalar", default_value=1.0), 1.0, id="torchscalar"),
+        pytest.param(
+            TorchScalarVariable(name="torchscalar", default_value=1.0), 1.0, id="torchscalar"
+        ),
     ],
 )
 def test_default_value_method_scalar_like(
